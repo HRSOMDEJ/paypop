@@ -4,8 +4,10 @@
  */
 function qs(h) { var o = {}; (String(h || '').split('?')[1] || '').split('&').forEach(function (p) { if (!p) return; var kv = p.split('='); o[decodeURIComponent(kv[0])] = decodeURIComponent(kv[1] || ''); }); return o; }
 
+var DOC_COLS = [['date', 'วันที่เอกสาร'], ['detail', 'รายละเอียด / ชื่องาน'], ['div', 'ฝ่าย'], ['hrmi', 'สถานะ HRMi'], ['hr', 'สถานะ HR'], ['cat', 'หมวด'], ['scan', 'ชื่อไฟล์ Scan']];
 Pages.docs = {
   pend: {}, sel: {},
+  cols: function () { var c = lsGet('pp:docs:cols'); if (!c) { c = {}; DOC_COLS.forEach(function (x) { c[x[0]] = 1; }); } return c; },
   render: function (el, hash) {
     var P = Pages.docs, d = S.data, par = qs(hash);
     el.innerHTML = pageHead('docs', 'เอกสารรอบนี้', 'ติดตามสถานะรายเอกสาร ย้ายหมวด แก้ฝ่าย และคัดลอกชื่อไฟล์ Scan', '<button class="btn" id="dxExport">' + icon('dl') + 'Excel ตามตัวกรอง</button>');
@@ -16,15 +18,17 @@ Pages.docs = {
     if (par.cat != null) P.f.cat = par.cat; if (par.st != null) P.f.st = par.st; if (par.q != null) P.f.q = par.q;
     if (par.cat == null && par.st == null && !P.keep) { P.f = { cat: P.f.cat || '', st: '', q: '' }; }
     var open = d.round.status === 'OPEN', all = (d.docs || []).filter(function (x) { return x.flag !== 'MOVED'; });
+    var dups = d.dups || {}, nDup = all.filter(function (x) { return dups[x.docNo] && x.flag !== 'REMOVED'; }).length;
     var cnt = {}; all.forEach(function (x) { if (x.flag !== 'REMOVED') cnt[x.category || '_none'] = (cnt[x.category || '_none'] || 0) + 1; });
     el.innerHTML += lockedNote() +
-      '<div class="card mb12"><div class="row"><div class="search grow">' + icon('search') + '<input id="dxQ" class="inp" placeholder="ค้นหาเลขที่ ชื่อรายได้ รายละเอียด ฝ่าย…" value="' + esc(P.f.q || '') + '"></div>' +
+      '<div class="card mb12"><div class="fbar"><div class="search">' + icon('search') + '<input id="dxQ" class="inp" placeholder="ค้นหาเลขที่ ชื่อรายได้ รายละเอียด ฝ่าย…" value="' + esc(P.f.q || '') + '"></div>' +
       '<select id="dxHm" class="inp" style="width:auto"><option value="">สถานะ HRMi ทั้งหมด</option><option>รออนุมัติ</option><option>อนุมัติ</option><option value="_other">สถานะอื่น</option></select>' +
-      (cnt._none && open ? '<button class="btn sm" id="dxCat">' + icon('tag') + 'จัดหมวดรายการใหม่ <span class="badge">' + cnt._none + '</span></button>' : '') + '</div>' +
+      (cnt._none && open ? '<button class="btn sm" id="dxCat">' + icon('tag') + 'จัดหมวดรายการใหม่ <span class="badge">' + cnt._none + '</span></button>' : '') +
+      '<button class="btn sm" id="dxCols" data-tip="เลือกคอลัมน์ที่จะแสดง (จำไว้ในเครื่องนี้)">' + icon('grid') + 'คอลัมน์</button></div>' +
       '<div class="chips mt12" id="dxCats"><button class="chip" data-c="">ทุกหมวด <span class="n">' + all.filter(function (x) { return x.flag !== 'REMOVED'; }).length + '</span></button>' +
       activeCats().map(function (c) { return '<button class="chip" data-c="' + esc(c.code) + '" style="--c:' + esc(c.color) + '"><span class="c"></span>' + esc(c.name) + ' <span class="n">' + (cnt[c.code] || 0) + '</span></button>'; }).join('') +
       (cnt._none ? '<button class="chip" data-c="_none" style="--c:#94a3b8"><span class="c"></span>ยังไม่จัดหมวด <span class="n">' + cnt._none + '</span></button>' : '') + '</div>' +
-      '<div class="seg mt12" id="dxSt"><button data-s="">ทุกสถานะ</button>' + R.HR_STATUS.map(function (s) { return '<button data-s="' + s.code + '">' + esc(s.name) + '</button>'; }).join('') + '<button data-s="_notok">ยังไม่อนุมัติ</button><button data-s="_removed">ถูกลบจาก HRMi</button></div></div>' +
+      '<div class="seg mt12" id="dxSt"><button data-s="">ทุกสถานะ</button>' + R.HR_STATUS.map(function (s) { return '<button data-s="' + s.code + '">' + esc(s.name) + '</button>'; }).join('') + '<button data-s="_notok">ยังไม่อนุมัติ</button>' + (nDup ? '<button data-s="_dup">⚑ เดือนงานซ้ำ ' + nDup + '</button>' : '') + '<button data-s="_removed">ถูกลบจาก HRMi</button></div></div>' +
       '<div id="dxTable"></div><div id="dxBulk"></div>';
     $('#dxHm').value = P.f.hm || '';
     var draw = function () {
@@ -32,22 +36,23 @@ Pages.docs = {
       $$('#dxSt [data-s]').forEach(function (b) { b.classList.toggle('on', b.getAttribute('data-s') === (P.f.st || '')); });
       var list = P.filtered(all), fn = Logic.fileNames(all.filter(function (x) { return x.flag !== 'REMOVED'; }));
       P.list = list; P.fn = fn;
-      var tot = R.sum(list, 'income');
+      var tot = R.sum(list, 'income'), C = P.cols();
       $('#dxTable').innerHTML = list.length ? '<div class="tbl-wrap tall"><table class="tbl"><thead><tr>' + (open ? '<th class="c"><input type="checkbox" id="dxAll" aria-label="เลือกทั้งหมด"></th>' : '') +
-        '<th>เลขที่เอกสาร</th><th>ชื่อรายได้ / รายละเอียด</th><th class="hide-sm">ฝ่าย ' + q('อ่านจากคอลัมน์ฝ่ายของ HRMi กดดินสอเพื่อแก้ (เช่น หน่วยงานกรอกผิด)') + '</th><th class="n">รวมรายได้</th><th>HRMi</th><th>สถานะ HR</th><th>หมวด</th><th class="c">ไฟล์ Scan ' + q('ชื่อไฟล์ Scan อัตโนมัติ: เลข 4 ตัวท้าย + ชื่อรายได้ (ตัดอักขระที่ HRMi ไม่รับ) กดเพื่อคัดลอก') + '</th><th></th></tr></thead><tbody>' +
+        '<th>เลขที่เอกสาร</th><th>ชื่อรายได้' + (C.detail ? ' / รายละเอียด' : '') + '</th>' + (C.div ? '<th class="hide-sm">ฝ่าย ' + q('อ่านจากคอลัมน์ฝ่ายของ HRMi กดดินสอเพื่อแก้ (เช่น หน่วยงานกรอกผิด)') + '</th>' : '') + '<th class="n">รวมรายได้</th>' + (C.hrmi ? '<th>HRMi</th>' : '') + (C.hr ? '<th>สถานะ HR</th>' : '') + (C.cat ? '<th>หมวด</th>' : '') + (C.scan ? '<th class="c">Scan ' + q('ชื่อไฟล์ Scan อัตโนมัติ: เลข 4 ตัวท้าย + ชื่อรายได้ (ตัดอักขระที่ HRMi ไม่รับ) กดเพื่อคัดลอก') + '</th>' : '') + '<th></th></tr></thead><tbody>' +
         list.map(function (x) {
           var p = P.pend[x.docNo] || {}, hs = p.hrStatus != null ? p.hrStatus : x.hrStatus, cat = p.category != null ? p.category : x.category, div = p.div != null ? p.div : (x.divFix || x.div);
           var dirty = Object.keys(p).length > 0;
           return '<tr class="' + (P.sel[x.docNo] ? 'sel ' : '') + (dirty ? 'dirty ' : '') + (x.flag === 'REMOVED' ? 'removed' : '') + '" data-doc="' + esc(x.docNo) + '">' + (open ? '<td class="c"><input type="checkbox" data-sel="' + esc(x.docNo) + '"' + (P.sel[x.docNo] ? ' checked' : '') + ' aria-label="เลือก"></td>' : '') +
-            '<td class="nowrap"><span class="mono copyable" data-copy="' + esc(x.docNo) + '" data-tip="คลิกเพื่อคัดลอก">' + esc(x.docNo) + '</span><div class="t2">' + esc(x.docDate || '') + '</div></td>' +
-            '<td style="min-width:240px"><div class="t1">' + esc(x.incomeName) + '</div><div class="t2">' + esc([x.remark, x.jobName].filter(Boolean).join(' · ')) + '</div>' + (x.hrNote ? '<div class="t2" style="color:var(--pri-ink)">' + icon('edit') + ' ' + esc(x.hrNote) + '</div>' : '') + (x.flag === 'REMOVED' ? '<span class="pill st-REMOVED">ถูกลบจาก HRMi</span>' : '') + '</td>' +
-            '<td class="hide-sm small" style="min-width:150px">' + esc(R.divShort(div)) + (x.divFix || p.div != null ? ' <span class="pill st-PROC nodot">แก้แล้ว</span>' : '') + (open ? ' <button class="btn xs ghost" data-div="' + esc(x.docNo) + '" aria-label="แก้ฝ่าย">' + icon('edit') + '</button>' : '') + '</td>' +
-            '<td class="n num">' + fmt(x.income) + (+x.deduct ? '<div class="t2" style="color:var(--bad)">หัก ' + fmt(x.deduct) + '</div>' : '') + '</td><td>' + hmPill(x.hrmiStatus) + '</td>' +
-            '<td>' + (open ? '<button class="btn xs ghost" data-st="' + esc(x.docNo) + '" style="padding:0">' + stPill(hs) + '</button>' : stPill(hs)) + '</td>' +
-            '<td>' + (open ? '<button class="btn xs ghost" data-cat="' + esc(x.docNo) + '" style="padding:0">' + catChip(cat) + '</button>' : catChip(cat)) + '</td>' +
-            '<td class="c"><button class="btn xs" data-fn="' + esc(x.docNo) + '" data-tip="' + esc(fn[x.docNo] || '') + '">' + icon('copy') + '</button></td>' +
+            '<td class="nowrap"><span class="mono copyable" data-copy="' + esc(x.docNo) + '" data-tip="คลิกเพื่อคัดลอก">' + esc(x.docNo) + '</span>' + (C.date ? '<div class="t2">' + esc(x.docDate || '') + '</div>' : '') + '</td>' +
+            '<td style="min-width:220px"><div class="t1">' + esc(x.incomeName) + '</div>' + (C.detail ? '<div class="t2">' + esc([x.remark, x.jobName].filter(Boolean).join(' · ')) + '</div>' : '') + (x.hrNote ? '<div class="t2" style="color:var(--pri-ink)">' + icon('edit') + ' ' + esc(x.hrNote) + '</div>' : '') + (x.flag === 'REMOVED' ? '<span class="pill st-REMOVED">ถูกลบจาก HRMi</span>' : '') +
+              (dups[x.docNo] ? ' <span class="pill st-DUP nodot" data-tip="' + esc('เดือนงานเดียวกันเคยส่งมาแล้ว: ' + dups[x.docNo].map(function (h) { return R.roundName(h[0]) + ' ' + h[1] + ' (' + fmt(h[2]) + ' บาท)'; }).join(' · ') + ' — ตรวจรายชื่อข้างในว่าไม่ซ้ำ') + '">⚑ เดือนงานซ้ำ</span>' : '') + '</td>' +
+            (C.div ? '<td class="hide-sm small" style="min-width:140px">' + esc(R.divShort(div)) + (x.divFix || p.div != null ? ' <span class="pill st-PROC nodot">แก้แล้ว</span>' : '') + (open ? ' <button class="btn xs ghost" data-div="' + esc(x.docNo) + '" aria-label="แก้ฝ่าย">' + icon('edit') + '</button>' : '') + '</td>' : '') +
+            '<td class="n num">' + fmt(x.income) + (+x.deduct ? '<div class="t2" style="color:var(--bad)">หัก ' + fmt(x.deduct) + '</div>' : '') + '</td>' + (C.hrmi ? '<td>' + hmPill(x.hrmiStatus) + '</td>' : '') +
+            (C.hr ? '<td>' + (open ? '<button class="btn xs ghost" data-st="' + esc(x.docNo) + '" style="padding:0">' + stPill(hs) + '</button>' : stPill(hs)) + '</td>' : '') +
+            (C.cat ? '<td>' + (open ? '<button class="btn xs ghost" data-cat="' + esc(x.docNo) + '" style="padding:0">' + catChip(cat) + '</button>' : catChip(cat)) + '</td>' : '') +
+            (C.scan ? '<td class="c"><button class="btn xs" data-fn="' + esc(x.docNo) + '" data-tip="' + esc(fn[x.docNo] || '') + '">' + icon('copy') + '</button></td>' : '') +
             '<td><button class="btn xs ghost" data-open="' + esc(x.docNo) + '" aria-label="รายละเอียด" data-tip="รายละเอียด / ประวัติ">' + icon('right') + '</button></td></tr>';
-        }).join('') + '</tbody><tfoot><tr><td colspan="' + (open ? 5 : 4) + '">' + fmt0(list.length) + ' เอกสาร</td><td class="n">' + fmt(tot) + '</td><td colspan="5"></td></tr></tfoot></table></div>'
+        }).join('') + '</tbody><tfoot><tr><td colspan="' + ((open ? 3 : 2) + (C.div ? 1 : 0)) + '">' + fmt0(list.length) + ' เอกสาร</td><td class="n">' + fmt(tot) + '</td><td colspan="' + (1 + ['hrmi', 'hr', 'cat', 'scan'].filter(function (k) { return C[k]; }).length) + '"></td></tr></tfoot></table></div>'
         : '<div class="card empty">' + mascot(90, 'think') + '<h3>ไม่พบเอกสารตามตัวกรอง</h3><p>' + (all.length ? 'ลองเปลี่ยนหมวดหรือสถานะ' : 'ยังไม่มีเอกสารในรอบนี้ ไปที่หน้านำเข้าจาก HRMi') + '</p>' + (all.length ? '' : '<a class="btn pri" href="#/import">' + icon('paste') + 'นำเข้าจาก HRMi</a>') + '</div>';
       P.drawBulk();
       P.bind();
@@ -59,6 +64,13 @@ Pages.docs = {
     $$('#dxSt [data-s]').forEach(function (b) { b.onclick = function () { P.f.st = b.getAttribute('data-s'); draw(); }; });
     if ($('#dxCat')) $('#dxCat').onclick = function () { ImportFlow.categorize(); };
     $('#dxExport').onclick = function () { P.exportList(); };
+    $('#dxCols').onclick = function (e) {
+      var C = P.cols(), box = document.createElement('div');
+      box.className = 'colpick';
+      box.innerHTML = '<div class="tiny muted" style="padding:4px 8px">แสดงคอลัมน์</div>' + DOC_COLS.map(function (c) { return '<label><input type="checkbox" data-col="' + c[0] + '"' + (C[c[0]] ? ' checked' : '') + '>' + esc(c[1]) + '</label>'; }).join('');
+      popover(e.currentTarget, box);
+      $$('[data-col]', box).forEach(function (cb) { cb.onchange = function () { var c = P.cols(); c[cb.getAttribute('data-col')] = cb.checked ? 1 : 0; lsSet('pp:docs:cols', c); draw(); }; });
+    };
     draw();
   },
   filtered: function (all) {
@@ -66,7 +78,8 @@ Pages.docs = {
     return all.filter(function (x) {
       if (f.st === '_removed') { if (x.flag !== 'REMOVED') return false; } else if (x.flag === 'REMOVED' && f.st) return false;
       if (f.cat) { if (f.cat === '_none' ? x.category : (x.category || '') !== f.cat) return false; }
-      if (f.st && f.st !== '_removed') { if (f.st === '_notok' ? x.hrStatus === 'APPROVED' : x.hrStatus !== f.st) return false; }
+      if (f.st === '_dup') { if (!((S.data && S.data.dups) || {})[x.docNo]) return false; }
+      else if (f.st && f.st !== '_removed') { if (f.st === '_notok' ? x.hrStatus === 'APPROVED' : x.hrStatus !== f.st) return false; }
       if (f.hm) { if (f.hm === '_other' ? (x.hrmiStatus === 'รออนุมัติ' || x.hrmiStatus === 'อนุมัติ') : x.hrmiStatus !== f.hm) return false; }
       if (q && (x.docNo + ' ' + x.incomeName + ' ' + (x.remark || '') + ' ' + (x.div || '') + ' ' + (x.divFix || '') + ' ' + (x.jobName || '') + ' ' + (x.hrNote || '')).toLowerCase().indexOf(q) < 0) return false;
       return true;
@@ -137,6 +150,7 @@ Pages.docs = {
       '<div class="row">' + stPill(x.hrStatus) + hmPill(x.hrmiStatus) + catChip(x.category) + (x.flag === 'REMOVED' ? '<span class="pill st-REMOVED">ถูกลบจาก HRMi</span>' : '') + '</div>' +
       '<dl class="kv"><dt>รวมรายได้</dt><dd class="num"><b>' + fmt(x.income) + '</b> บาท</dd><dt>รวมรายหัก</dt><dd class="num">' + fmt(x.deduct) + '</dd><dt>วันที่เอกสาร</dt><dd>' + esc(x.docDate || '—') + '</dd><dt>ชื่องาน</dt><dd>' + esc(x.jobName || '—') + '</dd>' +
       '<dt>ฝ่าย</dt><dd>' + esc(x.divFix || x.div || '—') + (x.divFix ? '<div class="t2">HRMi: ' + esc(x.div) + '</div>' : '') + '</dd><dt>หน่วยงาน</dt><dd>' + esc(x.orgUnit || '—') + '</dd><dt>ประเภทการจ่าย</dt><dd>' + esc(x.payType || '—') + '</dd>' +
+      '<dt>รหัสรายได้ HRMi</dt><dd>' + (codeOf(x.incomeName) ? '<span class="mono">' + esc(codeOf(x.incomeName)) + '</span>' : '<span class="muted">ไม่พบในรายการรายได้ HRMi</span>') + '</dd>' +
       '<dt>รายการในเช็กลิสต์</dt><dd>' + (it ? esc(it.freq === 'MONTHLY' ? 'ประจำทุกเดือน' : it.freq === 'RETIRED' ? 'เลิกใช้' : 'บางเดือน') + (it.note ? ' · ' + esc(it.note) : '') : 'ยังไม่มี') + '</dd>' +
       '<dt>นำเข้าครั้งแรก</dt><dd>' + thDateTime(x.firstSeen) + '</dd><dt>เห็นล่าสุด</dt><dd>' + thDateTime(x.lastSeen) + ' ' + esc(x.lastView || '') + '</dd></dl>' +
       '<div class="field"><label>ชื่อไฟล์ Scan</label><div class="row"><span class="mono flex1 wrap-any">' + esc(fn || '') + '</span><button class="btn sm" id="ddFn">' + icon('copy') + 'คัดลอก</button></div></div>' +
@@ -179,7 +193,7 @@ Pages.checklist = {
     var cl = Logic.checklist(d), open = d.round.status === 'OPEN', lim = S.boot.settings.ANOMALY_PCT || 30, nAvg = (d.stats && d.stats.n) || 0;
     var hasN = cl.rows.filter(function (r) { return r.status === 'HAS'; }).length;
     var tile = function (k, n, label, tone, ic, tip) { return '<button class="card kpi" data-f="' + k + '" style="text-align:left;cursor:pointer' + (P.f === k ? ';outline:2.5px solid var(--pri)' : '') + '"><span class="ico ' + tone + '">' + icon(ic) + '</span><div class="kpi-l">' + esc(label) + q(tip) + '</div><div class="kpi-v num">' + n + '</div></button>'; };
-    el.innerHTML += lockedNote() + '<div class="grid g4 stagger mb12" style="grid-template-columns:repeat(auto-fit,minmax(170px,1fr))">' +
+    el.innerHTML += lockedNote() + '<div class="grid stagger mb12 tiles6">' +
       tile('MAIN', cl.rows.length - cl.idle, 'รายการหลัก', 't-info', 'check', 'มาแล้ว + ยังไม่มา + ไม่มีเบิก (ไม่รวมรายการบางเดือนที่ไม่ได้เบิก)') +
       tile('MISSING', cl.missing, 'ยังไม่มา', 't-bad', 'alert', 'รายการประจำทุกเดือนที่ยังไม่มีเอกสาร ยังไม่ยืนยันไม่มีเบิก และไม่มีประมาณการ') +
       tile('HAS', hasN, 'มาแล้ว', 't-ok', 'ok', 'มีเอกสารในรอบนี้อย่างน้อย 1 ใบ') +
@@ -212,7 +226,7 @@ Pages.checklist = {
           var label = { HAS: 'มาแล้ว', MISSING: r.covered ? 'มีประมาณการ' : 'ยังไม่มา', NONE: 'ไม่มีเบิก', IDLE: 'บางเดือน' }[st];
           var note = pm ? pm.note : (r.mark && r.mark.note) || '';
           return '<tr class="' + (pm ? 'dirty' : '') + '"><td><span class="pill st-' + (st === 'MISSING' && r.covered ? 'WAIT' : st) + '">' + label + '</span></td>' +
-            '<td style="min-width:240px"><div class="t1">' + esc(r.name) + '</div><div class="t2">' + esc(R.divShort(r.div) || 'ทุกฝ่าย') + (r.item ? ' · ' + (r.item.freq === 'MONTHLY' ? 'ประจำทุกเดือน' : 'บางเดือน') : ' · ยังไม่อยู่ในตารางรายการ') + (r.item && r.item.note ? ' · ' + esc(r.item.note) : '') + '</div></td>' +
+            '<td style="min-width:240px"><div class="t1">' + esc(r.name) + '</div><div class="t2">' + (codeOf(r.name) ? '<span class="mono">' + esc(codeOf(r.name)) + '</span> · ' : '') + esc(R.divShort(r.div) || 'ทุกฝ่าย') + (r.item ? ' · ' + (r.item.freq === 'MONTHLY' ? 'ประจำทุกเดือน' : 'บางเดือน') : ' · ยังไม่อยู่ในตารางรายการ') + (r.item && r.item.note ? ' · ' + esc(r.item.note) : '') + '</div></td>' +
             '<td class="n">' + (r.docs.length ? '<button class="btn xs" data-docs="' + esc(r.key) + '">' + r.docs.length + ' ใบ</button>' : '—') + '</td><td class="n num">' + (r.amount ? fmt(r.amount) : r.est ? '<span class="muted" data-tip="ยอดประมาณการ">~' + fmt(r.est) + '</span>' : '—') + '</td>' +
             '<td class="n num hide-sm muted">' + (r.avg != null ? fmt(r.avg) : '—') + '</td><td class="n">' + (r.diff != null && r.amount ? '<span class="' + (r.anomaly ? 'pill st-RETURN nodot' : r.diff > 0 ? 'up' : 'down') + '">' + fmtPct(r.diff) + '</span>' : '') + '</td>' +
             '<td class="hide-sm small muted">' + esc(note) + (r.mark && r.mark.by ? '<div class="t2">' + esc(userName(r.mark.by)) + ' ' + thDateTime(r.mark.at) + '</div>' : '') + '</td>' +

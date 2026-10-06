@@ -153,17 +153,28 @@ var R = (function () {
   }
 
   /** เดือนงานจากรายละเอียด/ชื่องาน → 'yyyy-mm' (พ.ศ.) หรือ '' */
-  function workYm(remark, jobName) {
-    var s = clean(remark), i, m;
+  /** เดือนงานจากรายละเอียด (ไม่พบ → ใช้งวดในชื่องาน) · strict = ต้องระบุเดือนในรายละเอียดเท่านั้น */
+  function workYm(remark, jobName, strict) {
+    // ตัดส่วน "(รอบจ่าย/รอบเบิก …)" ออก · แก้สะกด กรกฏาคม · ใช้เดือนที่ปรากฏก่อนในข้อความ
+    var s = clean(remark).replace(/\(\s*รอบ\s*(จ่าย|เบิก)[^)]*\)?/g, ' ').replace(/กรกฏาคม/g, 'กรกฎาคม'), i, m, hits = [];
     for (i = 0; i < 12; i++) {
-      var re = new RegExp('(' + MTH_L[i] + '|' + MTH_S[i].replace(/\./g, '\\.?') + ')\\s*(25\\d\\d|\\d\\d)?');
-      if ((m = s.match(re))) {
-        var y = m[2] ? (+m[2] < 100 ? 2500 + (+m[2]) : +m[2]) : 0;
-        if (!y) { var mj = clean(jobName).match(/(\d{2})\s*$/); y = mj ? 2500 + (+mj[1]) : 0; }
-        if (y) return y + '-' + pad(i + 1);
-      }
+      var sh = MTH_S[i].replace(/\./g, '\\.'), bare = MTH_S[i].replace(/\./g, '');
+      var re = new RegExp('(' + MTH_L[i] + '|' + sh + '?|' + bare + '(?=\\s*\\d{2}))\\s*(25\\d\\d|\\d\\d)?', 'g');
+      while ((m = re.exec(s))) hits.push({ at: m.index, i: i, y: m[2] ? (+m[2] < 100 ? 2500 + (+m[2]) : +m[2]) : 0 });
     }
-    m = clean(jobName).match(/([ก-๙]+\.[ก-๙]*\.?)\s*(\d{2,4})\s*$/);
+    hits.sort(function (a, b) { return a.at - b.at; });
+    for (var h = 0; h < hits.length; h++) {
+      var y = hits[h].y;
+      if (!y && strict) continue;   // แบบเข้ม: ต้องมีปีในรายละเอียดด้วย
+      if (!y) { var jy = jobYm(jobName); if (jy) { y = +jy.slice(0, 4); if (hits[h].i + 1 > +jy.slice(5)) y--; } }   // ไม่มีปี → ปีของงวด (เดือนเกินงวด = ปีก่อน)
+      if (y) return y + '-' + pad(hits[h].i + 1);
+    }
+    if (strict) return '';
+    return jobYm(jobName);
+  }
+  /** งวดจากชื่องาน เช่น "1-30 ก.ย. 69" → '2569-09' */
+  function jobYm(jobName) {
+    var m = clean(jobName).match(/([ก-๙]+\.[ก-๙]*\.?)\s*(\d{2,4})\s*$/), i;
     if (m) {
       var key = m[1].replace(/\.?$/, '.');
       for (i = 0; i < 12; i++) if (MTH_S[i] === key || MTH_S[i].replace(/\./g, '') === m[1].replace(/\./g, '')) {

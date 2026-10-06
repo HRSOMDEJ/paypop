@@ -65,6 +65,8 @@ Pages.home = {
     var last = (d.imports || [])[0], open = d.round.status === 'OPEN';
     var todo = gate.issues.filter(function (x) { return x.n; });
     if (cl.anomaly) todo.push({ n: cl.anomaly, tone: 'vio', icon: 'pulse', title: 'ยอดผิดปกติเทียบค่าเฉลี่ย', desc: 'ต่างจากค่าเฉลี่ยเกิน ±' + (S.boot.settings.ANOMALY_PCT || 30) + '% ลองตรวจดู', href: '#/checklist?f=ANOM' });
+    var nDup = docs.filter(function (x) { return (d.dups || {})[x.docNo]; }).length;
+    if (open && nDup) todo.push({ n: nDup, tone: 'vio', icon: 'flag', title: 'เอกสารเดือนงานซ้ำกับรอบก่อน', desc: 'ชื่อรายได้ ฝ่าย และเดือนงานเดียวกับที่เคยส่งมาแล้ว ตรวจรายชื่อข้างในว่าไม่ซ้ำ', href: '#/docs?st=_dup' });
     if (open && gate.notApproved) todo.push({ n: gate.notApproved, tone: 'info', icon: 'docs', title: 'เอกสารที่ยังไม่อนุมัติ (สถานะ HR)', desc: 'รอเอกสาร / กำลังดำเนินการ / ส่งคืนแก้ไข', href: '#/docs?st=_notok' });
     var toneCls = { bad: 't-bad', warn: 't-sun', vio: 't-vio', info: 't-info' };
     el.innerHTML = pageHead('home', hi + ' คุณ' + first, d.round.name + ' · ' + (open ? 'รอบที่เปิดอยู่' : 'ปิดรอบแล้ว ' + thDateTime(d.round.closedAt))) +

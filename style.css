@@ -422,3 +422,101 @@ canvas.confetti { position: fixed; inset: 0; z-index: 99; pointer-events: none; 
 .ellip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 700px) { .hide-sm { display: none !important; } }
 @media (min-width: 701px) { .only-sm { display: none !important; } }
+
+/* ================================================ เมนูข้างยุบได้ + โหมดกะทัดรัด (build 2569-10-06.3) */
+.side-top { display: flex; align-items: center; gap: 6px; }
+.side-top .brand { flex: 1; min-width: 0; }
+.side-tog { flex: none; width: 30px; height: 30px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--muted); display: grid; place-items: center; cursor: pointer; transition: background .15s, color .15s, transform .2s; }
+.side-tog:hover { background: var(--surface-3); color: var(--ink); }
+.side-tog .i { transition: transform .25s; }
+.shell { transition: grid-template-columns .25s ease; }
+html.side-mini { --side: 72px; }
+html.side-mini .side { padding: 14px 10px; align-items: stretch; }
+html.side-mini .side-top { flex-direction: column; gap: 8px; }
+html.side-mini .brand { padding: 0; justify-content: center; }
+html.side-mini .brand > span:last-child, html.side-mini .nav-sec, html.side-mini .nav a > span:not(.badge), html.side-mini .me .grow, html.side-mini .side-foot .tiny, html.side-mini #themeBtn, html.side-mini .side .round-pick .lab { display: none; }
+html.side-mini .side-tog .i { transform: rotate(180deg); }
+html.side-mini .nav { gap: 4px; }
+html.side-mini .nav a { justify-content: center; padding: 10px 0; }
+html.side-mini .nav a.on::before { left: -10px; }
+html.side-mini .nav a .badge { position: absolute; top: 2px; right: 2px; min-width: 17px; height: 17px; font-size: .62rem; padding: 0 4px; }
+html.side-mini .nav-sep { display: block; height: 1px; background: var(--line); margin: 6px 8px; }
+html.side-mini .side .round-pick { padding: 6px 2px; text-align: center; }
+html.side-mini .side .round-pick .nm { font-size: .7rem; flex-direction: column; gap: 3px; line-height: 1.2; }
+html.side-mini .side .round-pick .nm .pill { font-size: .6rem; padding: 0 6px; }
+html.side-mini .me { flex-direction: column; padding: 6px 2px; gap: 4px; }
+.nav-sep { display: none; }
+
+/* ---- โหมดกะทัดรัด (ค่าเริ่มต้น) */
+html[data-density="compact"] { font-size: 14.5px; --side: 228px; --r-xl: 16px; --r-lg: 14px; --r-md: 10px; }
+html[data-density="compact"].side-mini { --side: 64px; }
+html[data-density="compact"] body { font-size: 13.5px; line-height: 1.5; }
+html[data-density="compact"] .main { padding: 14px 20px 40px; }
+html[data-density="compact"] .side { padding: 14px 10px; gap: 10px; }
+html[data-density="compact"] .brand-name { font-size: 1.25rem; }
+html[data-density="compact"] .brand .mascot svg { width: 36px; height: 36px; }
+html[data-density="compact"] .round-pick { padding: 7px 10px; }
+html[data-density="compact"] .round-pick .nm { font-size: .95rem; }
+html[data-density="compact"] .nav a { padding: 7px 10px; gap: 10px; border-radius: 10px; }
+html[data-density="compact"] .nav a.on::before { left: -10px; top: 7px; bottom: 7px; }
+html[data-density="compact"] .nav-sec { padding: 8px 10px 2px; }
+html[data-density="compact"] .me { padding: 6px; }
+html[data-density="compact"] .avatar { width: 30px; height: 30px; }
+html[data-density="compact"] .topbar { margin-bottom: 12px; gap: 10px; }
+html[data-density="compact"] .topbar h1 { font-size: 1.32rem; gap: 8px; }
+html[data-density="compact"] .topbar h1 .ico { width: 32px !important; height: 32px !important; border-radius: 10px; }
+html[data-density="compact"] .topbar .sub { font-size: .84rem; margin-top: 0; }
+html[data-density="compact"] .grid { gap: 12px; }
+html[data-density="compact"] .card { padding: 12px 14px; }
+html[data-density="compact"] .card-h { margin-bottom: 8px; }
+html[data-density="compact"] .card-h h2, html[data-density="compact"] .card-h h3 { font-size: 1rem; }
+html[data-density="compact"] .hero { padding: 14px 18px; border-radius: 18px; gap: 12px; }
+html[data-density="compact"] .hero h2 { font-size: 1.18rem; }
+html[data-density="compact"] .hero p { margin-top: 2px; font-size: .86rem; }
+html[data-density="compact"] .hero .chips { margin-top: 8px; }
+html[data-density="compact"] .hero .mascot svg { width: 76px; height: 76px; }
+html[data-density="compact"] .hero::after { width: 200px; height: 200px; top: -70px; }
+html[data-density="compact"] .kpi-l { font-size: .78rem; padding-right: 36px; min-height: 18px; }
+html[data-density="compact"] .kpi-v { font-size: 1.32rem; margin-top: 2px; }
+html[data-density="compact"] .kpi-s { font-size: .74rem; }
+html[data-density="compact"] .kpi .ico { width: 30px; height: 30px; border-radius: 10px; right: 10px; top: 10px; }
+html[data-density="compact"] .kpi .ico .i { width: 17px; height: 17px; }
+html[data-density="compact"] .btn { padding: 7px 13px; gap: 6px; border-radius: 10px; font-size: .88rem; }
+html[data-density="compact"] .btn.sm { padding: 5px 10px; font-size: .82rem; border-radius: 9px; }
+html[data-density="compact"] .btn.xs { padding: 2px 7px; font-size: .76rem; }
+html[data-density="compact"] .btn.icon { width: 34px; height: 34px; padding: 7px; }
+html[data-density="compact"] .btn.icon.sm { width: 28px; height: 28px; padding: 5px; }
+html[data-density="compact"] .inp, html[data-density="compact"] select.inp, html[data-density="compact"] textarea.inp { padding: 6px 10px; border-radius: 10px; }
+html[data-density="compact"] .search .inp { padding-left: 32px; }
+html[data-density="compact"] .chip { padding: 2px 9px; font-size: .78rem; }
+html[data-density="compact"] .chips { gap: 5px; }
+html[data-density="compact"] .tab { padding: 6px 11px; font-size: .84rem; border-radius: 10px; }
+html[data-density="compact"] .seg button { padding: 4px 10px; font-size: .8rem; }
+html[data-density="compact"] .tbl th { padding: 7px 8px; font-size: .72rem; }
+html[data-density="compact"] .tbl td { padding: 5px 8px; }
+html[data-density="compact"] .tbl .t2 { font-size: .74rem; }
+html[data-density="compact"] .mt12 { margin-top: 9px; } html[data-density="compact"] .mb12 { margin-bottom: 9px; }
+html[data-density="compact"] .cat-card .amt { font-size: 1.12rem; }
+html[data-density="compact"] .empty { padding: 20px 12px; }
+html[data-density="compact"] .modal-b { padding-top: 12px; }
+
+/* ---- แถบตัวเลขสรุปเรียงแถวเดียว (เช็กลิสต์) */
+.tiles6 { grid-template-columns: repeat(6, minmax(0, 1fr)) !important; }
+@media (max-width: 1150px) { .tiles6 { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; } }
+@media (max-width: 700px) { .tiles6 { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; } }
+/* ---- ตัวกรองเอกสารแบบแถวเดียว */
+.fbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.fbar .search { flex: 1 1 260px; }
+.colpick { display: grid; gap: 2px; min-width: 210px; }
+.colpick label { display: flex; gap: 8px; align-items: center; padding: 6px 8px; border-radius: 8px; cursor: pointer; font-size: .86rem; }
+.colpick label:hover { background: var(--surface-3); }
+.colpick input { accent-color: var(--pri); width: 15px; height: 15px; }
+.pill.st-DUP { background: var(--violet-soft); color: var(--violet); }
+.side-top .brand-sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 130px; }
+.side-top .brand > span:last-child { min-width: 0; }
+.round-pick .nm-s { display: none; }
+html.side-mini .side .round-pick .nm { display: none; }
+html.side-mini .side .round-pick .nm-s { display: grid; justify-items: center; gap: 2px; font-size: .68rem; line-height: 1.15; color: var(--ink); position: relative; }
+html.side-mini .side .round-pick .nm-s .i { width: 18px; height: 18px; color: var(--pri); }
+html.side-mini .side .round-pick .nm-s .dot { position: absolute; top: -2px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+html.side-mini .nav a .badge { top: -3px; right: -1px; min-width: 16px; height: 16px; font-size: .58rem; padding: 0 3px; box-shadow: 0 0 0 2px var(--surface); }

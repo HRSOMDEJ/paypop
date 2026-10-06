@@ -2,8 +2,8 @@
  * core.js — แกนหน้าเว็บ PayPop: เครือข่าย แคช ล็อกอิน เมนู ชิ้นส่วน UI (toast/modal/drawer/popover/tooltip/confetti) และตัวนำทาง
  * หลักการความเร็ว: แสดงข้อมูลที่จำไว้ในเครื่องทันที → ถามหลังบ้านเฉพาะส่วนที่เปลี่ยน (rev/dv) · บันทึกครั้งเดียวต่อหน้า
  */
-var APP_BUILD = '2569-10-06.2', APP_BUILD_TH = '6 ต.ค. 2569';
-var S = { token: null, boot: null, roundId: null, data: null, items: {}, itemsList: [], cats: {}, page: null, busy: 0, dirty: null };
+var APP_BUILD = '2569-10-06.3', APP_BUILD_TH = '6 ต.ค. 2569';
+var S = { codes: {}, token: null, boot: null, roundId: null, data: null, items: {}, itemsList: [], cats: {}, page: null, busy: 0, dirty: null };
 
 /* ================================================================ utils */
 function $(sel, root) { return (root || document).querySelector(sel); }
@@ -202,7 +202,8 @@ function drawer(html, cls) {
 function popover(anchor, items, onPick) {
   closePops();
   var p = document.createElement('div'); p.className = 'pop'; p.setAttribute('role', 'menu');
-  items.forEach(function (it) {
+  if (items && items.nodeType === 1) p.appendChild(items);   // เนื้อหาเอง (เช่น รายการเลือกคอลัมน์)
+  else items.forEach(function (it) {
     if (it === '-') { var s = document.createElement('div'); s.className = 'sep'; p.appendChild(s); return; }
     var b = document.createElement('button'); b.type = 'button'; b.className = it.on ? 'on' : ''; b.innerHTML = (it.icon ? icon(it.icon) : '') + (it.html || esc(it.label));
     b.onclick = function () { closePops(); onPick(it.value, it); };
@@ -252,6 +253,7 @@ function confetti() {
     tip = document.createElement('div'); tip.className = 'tip'; tip.textContent = t; document.body.appendChild(tip);
     var r = el.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
     var left = Math.min(innerWidth - w - 8, Math.max(8, r.left + r.width / 2 - w / 2)), top = r.top - h - 8; if (top < 8) top = r.bottom + 8;
+    if (el.closest('.side')) { left = r.right + 10; top = r.top + r.height / 2 - h / 2; }   // เมนูข้าง: แสดงทางขวา
     tip.style.left = left + 'px'; tip.style.top = top + 'px';
   }
   function hide() { if (tip) { tip.remove(); tip = null; } }
@@ -285,8 +287,11 @@ function setBoot(b) {
   } else if (Array.isArray(b.items)) S.itemsList = b.items;
   S.items = {}; S.itemsList.forEach(function (it) { S.items[it.key] = it; });
   S.cats = {}; (b.categories || []).forEach(function (c) { S.cats[c.code] = c; });
+  S.codes = {}; (b.incomeCodes || []).forEach(function (r) { S.codes[r[0]] = r[1]; });
   lsSet(keyFor('boot'), b);
 }
+/** รหัสรายได้ HRMi ของชื่อนี้ ('' = ไม่พบ) */
+function codeOf(name) { return S.codes[R.itemKey(name, '').replace(/\|$/, '')] || ''; }
 function setItems(compact) { if (!compact) return; S.boot.items = compact; setBoot(S.boot); }
 function activeCats() { return (S.boot.categories || []).filter(function (c) { return c.active !== false; }); }
 function roundsList() { return (S.boot && S.boot.rounds) || []; }
@@ -331,14 +336,15 @@ var NAV = [
 var MBAR = ['home', 'import', 'docs', 'checklist'];
 function navHtml() {
   return NAV.map(function (n) {
-    if (n.sec) return '<div class="nav-sec">' + esc(n.sec) + '</div>';
+    if (n.sec) return '<div class="nav-sec">' + esc(n.sec) + '</div><div class="nav-sep"></div>';
     return '<a href="#/' + n.key + '" data-nav="' + n.key + '">' + icon(n.icon) + '<span>' + esc(n.label) + '</span>' + (n.badge ? '<span class="badge" data-badge="' + n.badge + '" hidden></span>' : '') + '</a>';
   }).join('');
 }
 function renderShell() {
   var me = S.boot.me, ini = (me.fullName || '?').replace(/^(นาย|นางสาว|นาง)\s*/, '').charAt(0);
   $('#app').innerHTML = '<div class="topprog"></div><div class="shell"><aside class="side">' +
-    '<a class="brand" href="#/home">' + mascot(44) + '<span><span class="brand-name">Pay<b>Pop</b></span><span class="brand-sub">ระบบสรุปบันทึกการจ่าย</span></span></a>' +
+    '<div class="side-top"><a class="brand" href="#/home">' + mascot(44) + '<span><span class="brand-name">Pay<b>Pop</b></span><span class="brand-sub">ระบบสรุปบันทึกการจ่าย</span></span></a>' +
+    '<button class="side-tog" id="sideTog" type="button" aria-label="ยุบ/ขยายเมนู">' + icon('left') + '</button></div>' +
     '<button class="round-pick" id="roundPick" type="button"></button><nav class="nav" aria-label="เมนูหลัก">' + navHtml() + '</nav>' +
     '<div class="side-foot"><div class="me"><span class="avatar">' + esc(ini) + '</span><span class="grow"><span class="nm ellip" style="display:block">' + esc(me.fullName) + '</span><span class="cd">' + esc(me.empCode) + '</span></span>' +
     '<button class="btn ghost icon sm" id="themeBtn" data-tip="สลับโหมดสว่าง/มืด" aria-label="สลับธีม">' + icon('moon') + '</button><button class="btn ghost icon sm" id="meBtn" data-tip="บัญชีของฉัน" aria-label="บัญชี">' + icon('down') + '</button></div>' +
@@ -349,9 +355,12 @@ function renderShell() {
     '<button type="button" id="mMore">' + icon('menu') + '<span>เพิ่มเติม</span></button></nav>';
   $('#roundPick').onclick = roundMenu; $('#roundPick2').onclick = roundMenu;
   $('#themeBtn').onclick = toggleTheme;
+  $('#sideTog').onclick = function () { Layout.toggleSide(); };
   $('#meBtn').onclick = function () {
-    popover($('#meBtn'), [{ label: 'เปลี่ยนรหัสผ่าน', icon: 'key', value: 'pw' }, { label: 'ซิงก์ข้อมูลใหม่ทั้งหมด', icon: 'refresh', value: 'sync' }, '-', { label: 'ออกจากระบบ', icon: 'out', value: 'out' }], function (v) {
-      if (v === 'pw') changePasswordDlg(); else if (v === 'sync') App.resync(); else if (v === 'out') App.logout();
+    var dense = Layout.density() === 'compact';
+    popover($('#meBtn'), [{ label: dense ? 'มุมมองสบายตา (ตัวใหญ่)' : 'มุมมองกะทัดรัด (เห็นข้อมูลมากขึ้น)', icon: 'grid', value: 'dense' }, { label: 'สลับโหมดสว่าง/มืด', icon: 'moon', value: 'theme' }, '-', { label: 'เปลี่ยนรหัสผ่าน', icon: 'key', value: 'pw' }, { label: 'ซิงก์ข้อมูลใหม่ทั้งหมด', icon: 'refresh', value: 'sync' }, '-', { label: 'ออกจากระบบ', icon: 'out', value: 'out' }], function (v) {
+      if (v === 'dense') Layout.setDensity(dense ? 'comfy' : 'compact'); else if (v === 'theme') toggleTheme();
+      else if (v === 'pw') changePasswordDlg(); else if (v === 'sync') App.resync(); else if (v === 'out') App.logout();
     });
   };
   var more = function (e) {
@@ -360,13 +369,31 @@ function renderShell() {
     });
   };
   $('#mMore').onclick = more; $('#mMenu').onclick = more;
-  updateRoundPick(); checkBanner();
+  updateRoundPick(); checkBanner(); Layout.apply();
 }
+
+/* ================================================================ layout: เมนูข้างยุบได้ · ความหนาแน่น (จำไว้ในเครื่อง) */
+var Layout = {
+  pref: function () { try { return localStorage.getItem('pp:side') || ''; } catch (e) { return ''; } },
+  mini: function () { var p = Layout.pref(); return p ? p === 'mini' : window.innerWidth < 1280; },
+  density: function () { try { return localStorage.getItem('pp:density') || 'compact'; } catch (e) { return 'compact'; } },
+  apply: function () {
+    var root = document.documentElement, mini = Layout.mini();
+    root.setAttribute('data-density', Layout.density());
+    root.classList.toggle('side-mini', mini);
+    $$('.side .nav a').forEach(function (a) { var t = $('span', a); if (mini && t) a.setAttribute('data-tip', t.textContent); else a.removeAttribute('data-tip'); });
+    var rp = $('#roundPick'); if (rp) { if (mini) rp.setAttribute('data-tip', 'เปลี่ยนรอบที่กำลังดู'); else rp.removeAttribute('data-tip'); }
+    var tg = $('#sideTog'); if (tg) tg.setAttribute('data-tip', mini ? 'ขยายเมนู' : 'ยุบเมนู');
+  },
+  toggleSide: function () { try { localStorage.setItem('pp:side', Layout.mini() ? 'full' : 'mini'); } catch (e) { } Layout.apply(); },
+  setDensity: function (v) { try { localStorage.setItem('pp:density', v); } catch (e) { } Layout.apply(); toast(v === 'compact' ? 'มุมมองกะทัดรัด' : 'มุมมองสบายตา', 'ok', 1600); }
+};
+window.addEventListener('resize', debounce(function () { if (!Layout.pref()) Layout.apply(); }, 200));
 function updateRoundPick() {
   var r = curRound();
   ['#roundPick', '#roundPick2'].forEach(function (s) {
     var el = $(s); if (!el) return;
-    el.innerHTML = '<span class="lab">รอบที่กำลังดู ' + icon('down') + '</span><span class="nm">' + (r ? esc(r.name) + ' ' + (r.status === 'OPEN' ? '<span class="pill st-APPROVED">เปิด</span>' : '<span class="pill st-NONE">ปิดแล้ว</span>') : '<span class="muted">ยังไม่มีรอบ</span>') + '</span>';
+    el.innerHTML = '<span class="nm-s">' + (r ? icon('cal') + '<b>' + esc(R.ymLabel(r.id)) + '</b>' + (r.status === 'OPEN' ? '<i class="dot ok"></i>' : '') : icon('cal')) + '</span><span class="lab">รอบที่กำลังดู ' + icon('down') + '</span><span class="nm">' + (r ? esc(r.name) + ' ' + (r.status === 'OPEN' ? '<span class="pill st-APPROVED">เปิด</span>' : '<span class="pill st-NONE">ปิดแล้ว</span>') : '<span class="muted">ยังไม่มีรอบ</span>') + '</span>';
   });
   updateBadges();
 }
@@ -489,6 +516,7 @@ function changePasswordDlg() {
 /* ================================================================ app lifecycle */
 var App = {
   start: function () {
+    Layout.apply();
     if (typeof API_URL === 'undefined' || /ใส่|PASTE|xxxxx/i.test(API_URL)) { $('#app').innerHTML = '<div class="boot-splash">' + mascot(120, 'think') + '<h2>ยังไม่ได้ตั้งค่า config.js</h2><p>ใส่ลิงก์ /exec ของ Apps Script ในไฟล์ config.js</p></div>'; return; }
     S.token = lsGet('pp:token');
     var code = lsGet('pp:lastCode');
@@ -507,6 +535,15 @@ var App = {
     if (!location.hash || location.hash === '#/' || location.hash === '#') history.replaceState(null, '', '#/home');
     route();
     if (S.roundId) loadRound(S.roundId, function (d, fromCache) { if (!fromCache) { updateBadges(); refreshPage(); } else updateBadges(); }).catch(fail);
+    setTimeout(App.prefetch, 3000);
+  },
+  /** โหลดข้อมูลหน้าที่เปิดบ่อยเก็บไว้ในเครื่องล่วงหน้า (หลังหน้าแรกขึ้นแล้ว ทีละคำขอ ไม่แย่งหน้าที่ใช้อยู่) */
+  prefetch: function () {
+    if (!S.token || S.bulk) return;
+    var rid = S.roundId, jobs = [];
+    if (rid && S.page !== 'deduct') jobs.push(function () { return api('getDeductions', { roundId: rid }).then(function (r) { lsSet(keyFor('ded:' + rid), r); }); });
+    if (S.page !== 'wl') jobs.push(function () { return api('getWl', {}).then(function (r) { lsSet(keyFor('wl'), r.rows); }); });
+    jobs.reduce(function (p, j) { return p.then(j).catch(function () { }); }, Promise.resolve());
   },
   selectRound: function (id) {
     if (S.dirty) return toast('กรุณาบันทึกหรือยกเลิกการแก้ไขในหน้านี้ก่อนเปลี่ยนรอบ', 'warn');

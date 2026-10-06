@@ -124,7 +124,7 @@ Pages.deduct = {
     el.innerHTML += '<div id="ddBody"><div class="card"><div class="sk" style="height:300px"></div></div></div><div id="ddBulk"></div>';
     var rid = S.roundId;
     if (P.cache && P.cache.roundId === rid && S.dirty === 'deduct') return P.draw();
-    api('getDeductions', { roundId: rid }).then(function (res) { if (S.roundId !== rid) return; P.cache = { roundId: rid, res: res, rows: res.rows.map(function (r) { return Object.assign({}, r); }) }; P.draw(); }, fail);
+    api('getDeductions', { roundId: rid }).then(function (res) { if (S.roundId !== rid) return; P.cache = { roundId: rid, res: res, rows: res.rows.map(function (r) { return Object.assign({}, r); }) }; P.draw(); }, function (e) { loadErr($('#ddBody'), e, function () { P.render(el); }); });
   },
   sums: function (rows) {
     var out = rows.map(function () { return null; });
@@ -199,7 +199,7 @@ Pages.wl = {
     $('#wlX').onclick = function () { P.exportX(); };
     var ck = keyFor('wl'), cached = lsGet(ck);
     if (cached) { P.rows = cached; P.draw(); }
-    api('getWl', {}).then(function (res) { P.rows = res.rows; lsSet(ck, res.rows); P.draw(); }, fail);
+    api('getWl', {}).then(function (res) { P.rows = res.rows; lsSet(ck, res.rows); P.draw(); }, function (e) { if (cached) fail(e); else loadErr($('#wlBody'), e, function () { Pages.wl.render(el); }); });
   },
   matrix: function () {
     var P = this, rows = (P.rows || []).filter(function (r) { return !P.kw || r.name.indexOf(P.kw) >= 0; });

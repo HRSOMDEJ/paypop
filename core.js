@@ -2,7 +2,7 @@
  * core.js — แกนหน้าเว็บ PayPop: เครือข่าย แคช ล็อกอิน เมนู ชิ้นส่วน UI (toast/modal/drawer/popover/tooltip/confetti) และตัวนำทาง
  * หลักการความเร็ว: แสดงข้อมูลที่จำไว้ในเครื่องทันที → ถามหลังบ้านเฉพาะส่วนที่เปลี่ยน (rev/dv) · บันทึกครั้งเดียวต่อหน้า
  */
-var APP_BUILD = '2569-10-06.1', APP_BUILD_TH = '6 ต.ค. 2569';
+var APP_BUILD = '2569-10-06.2', APP_BUILD_TH = '6 ต.ค. 2569';
 var S = { token: null, boot: null, roundId: null, data: null, items: {}, itemsList: [], cats: {}, page: null, busy: 0, dirty: null };
 
 /* ================================================================ utils */
@@ -140,6 +140,12 @@ function toast(msg, type, ms) {
   el.innerHTML = icon(type === 'bad' ? 'alert' : type === 'warn' ? 'info' : 'ok') + '<span>' + esc(msg) + '</span>';
   box.appendChild(el);
   setTimeout(function () { el.classList.add('out'); setTimeout(function () { el.remove(); }, 320); }, ms || (type === 'bad' ? 6000 : 3200));
+}
+/** แสดงกล่องโหลดไม่สำเร็จ + ปุ่มลองใหม่ แทนโครงกระดูกที่ค้าง */
+function loadErr(box, e, retry) {
+  fail(e); if (!box) return;
+  box.innerHTML = '<div class="card empty">' + mascot(90, 'sleep') + '<h3>โหลดข้อมูลไม่สำเร็จ</h3><p class="small muted">' + esc(e && e.message ? e.message : String(e)) + '</p><button class="btn pri" data-retry>' + icon('refresh') + 'ลองอีกครั้ง</button></div>';
+  $('[data-retry]', box).onclick = retry;
 }
 function fail(e) { toast(e && e.message ? e.message : String(e), 'bad'); console.warn(e); }
 /** modal({title, body(html), wide, actions:[{label, cls, value, click}]}) → Promise(value) */
@@ -401,6 +407,7 @@ function lockedNote() {
 function route() {
   var h = (location.hash || '#/home').replace(/^#\/?/, ''), key = h.split('?')[0] || 'home';
   if (!Pages[key]) key = 'home';
+  if (S.bulk && S.page !== key) { history.replaceState(null, '', '#/' + S.page + (S.page === 'settings' ? '?tab=history' : '')); toast('กำลังนำเข้าข้อมูลอยู่ กรุณารอให้เสร็จก่อนเปลี่ยนหน้า', 'warn'); return; }
   if (S.dirty && S.page !== key) {
     var leaving = S.page;
     confirmDlg('ยังไม่ได้บันทึก', 'มีการแก้ไขที่ยังไม่ได้กดบันทึกในหน้านี้ ต้องการออกโดยไม่บันทึกใช่ไหม', 'ออกโดยไม่บันทึก', true).then(function (y) {

@@ -176,40 +176,138 @@ Pages.settings = {
 
   /* ---------------- ข้อมูลย้อนหลัง */
   tab_history: function (box) {
-    var have = {}; roundsList().forEach(function (r) { have[r.id] = r; });
-    box.innerHTML = '<div class="grid g2"><div class="card"><div class="card-h"><h2>' + icon('db') + 'นำเข้าข้อมูลย้อนหลังจาก Excel เดิม</h2></div>' +
-      '<p class="small">ใช้ไฟล์ <span class="mono">paypop_ข้อมูลตั้งต้น_2568-2569.json</span> (สร้างจากไฟล์สรุปบันทึกการจ่ายเดิม) ระบบจะ</p><ul class="small" style="margin-top:0"><li>ตั้งตารางรายการรายได้ หมวด และความถี่ (ไม่ทับรายการที่แก้เองแล้ว)</li><li>สร้างรอบย้อนหลังแบบปิดแล้ว ใช้ทำกราฟแนวโน้ม ค่าเฉลี่ย และตรวจ WL</li><li>ข้ามรอบที่มีอยู่แล้วในระบบ</li></ul>' +
+    var st = null, pack = null;
+    box.innerHTML = '<div class="grid g2"><div class="card"><div class="card-h"><h2>' + icon('db') + 'นำเข้าข้อมูลย้อนหลังจาก Excel เดิม ' + q('ระบบส่งข้อมูลทีละ 2–3 เดือนต่อครั้ง ถ้าเน็ตหรือ Google สะดุด จะลองใหม่ให้เอง และกด “นำเข้าต่อ” ได้จากจุดเดิม ไม่ต้องเริ่มใหม่') + '</h2></div>' +
+      '<p class="small">ใช้ไฟล์ <span class="mono">paypop_ข้อมูลตั้งต้น_2568-2569.json</span> (สร้างจากไฟล์สรุปบันทึกการจ่ายเดิม) ระบบจะ</p><ul class="small" style="margin-top:0"><li>ตั้งตารางรายการรายได้ หมวด และความถี่ (ไม่ทับรายการที่แก้เองแล้ว)</li><li>สร้างรอบย้อนหลังแบบปิดแล้ว ใช้ทำกราฟแนวโน้ม ค่าเฉลี่ย และตรวจ WL</li><li>นำเข้าเฉพาะเดือนที่ยังไม่มีหรือข้อมูลไม่ตรงไฟล์ · นำเข้าค้างไว้ก็ทำต่อได้</li></ul>' +
       '<div class="drop" id="hsDrop" tabindex="0" role="button">' + icon('up', 'big') + '<b>เลือกไฟล์ .json</b><input type="file" id="hsFile" accept=".json" hidden></div><div id="hsInfo" class="mt12"></div></div>' +
-      '<div class="card"><div class="card-h"><h3>' + icon('cal') + 'รอบที่มีในระบบ</h3></div><p class="small muted" style="margin:0">' + roundsList().length + ' รอบ · ย้อนหลัง ' + roundsList().filter(function (r) { return r.source === 'HISTORY'; }).length + ' รอบ</p></div></div>';
+      '<div class="card"><div class="card-h"><h3>' + icon('cal') + 'รอบที่มีในระบบ</h3></div><div id="hsHave"><div class="sk" style="height:60px"></div></div></div></div>';
+    var showHave = function () {
+      var ids = Object.keys(st || {}), hs = ids.filter(function (k) { return st[k].source === 'HISTORY'; });
+      $('#hsHave').innerHTML = '<p class="small muted" style="margin:0">' + ids.length + ' รอบ · ย้อนหลัง ' + hs.length + ' รอบ' + (hs.length ? ' (' + esc(R.ymLabel(hs.sort()[0])) + ' – ' + esc(R.ymLabel(hs[hs.length - 1])) + ')' : '') + '</p>';
+    };
+    var loadSt = function () { return api('historyStatus', {}).then(function (x) { st = x || {}; showHave(); if (pack) plan(); }); };
+    loadSt().catch(fail);
+    var stateOf = function (r) {
+      var h = st[r.roundId], live = r.docs.filter(function (d) { return !d[pack.docCols.indexOf('movedTo')]; }).length;
+      var inc = R.r2(r.docs.reduce(function (s, d) { return s + R.money(d[pack.docCols.indexOf('income')]); }, 0));
+      if (!h) return 'new';
+      if (h.source !== 'HISTORY' || h.status === 'OPEN') return 'real';
+      return h.docs === r.docs.length && h.idx === live && Math.abs(h.income - inc) < 1 ? 'ok' : 'diff';
+    };
+    var LBL = { 'new': ['ยังไม่มี', 'st-WAIT'], ok: ['ครบแล้ว ✓', 'st-APPROVED'], diff: ['ไม่ตรงไฟล์ → นำเข้าทับ', 'st-RETURN'], real: ['รอบใช้งานจริง (ข้าม)', 'st-PROC'] };
+    var plan = function () {
+      var all = $('#hsAll') && $('#hsAll').checked, rows = pack.rounds.map(function (r) { return { r: r, s: stateOf(r) }; });
+      var todo = rows.filter(function (x) { return x.s === 'new' || x.s === 'diff' || (all && x.s === 'ok'); }).map(function (x) { return x.r; });
+      $('#hsInfo').innerHTML = '<div class="callout info">' + icon('info') + '<div>ไฟล์มี <b>' + pack.rounds.length + ' รอบ</b> · ' + fmt0(pack.rounds.reduce(function (s, r) { return s + r.docs.length; }, 0)) + ' เอกสาร · รายการรายได้ ' + fmt0(pack.items.length) + ' รายการ<br>ต้องนำเข้า <b>' + todo.length + ' รอบ</b>' + (todo.length ? ' · ใช้เวลาประมาณ ' + Math.max(1, Math.round(todo.length * 12 / 60)) + '–' + Math.max(2, Math.round(todo.length * 30 / 60)) + ' นาที' : ' — ข้อมูลครบแล้ว 🎉') + '</div></div>' +
+        '<div class="tbl-wrap mt12" style="max-height:320px"><table class="tbl"><thead><tr><th>รอบ</th><th class="r">เอกสาร</th><th class="r">ยอด HRMi</th><th>สถานะในระบบ</th></tr></thead><tbody>' +
+        rows.map(function (x) { var inc = x.r.docs.reduce(function (s, d) { return s + R.money(d[pack.docCols.indexOf('income')]); }, 0), l = LBL[x.s]; return '<tr><td class="nowrap">' + esc(x.r.name) + (x.r.note ? ' ' + q(x.r.note) : '') + '</td><td class="r num">' + fmt0(x.r.docs.length) + '</td><td class="r num">' + fmt(inc) + '</td><td><span class="pill ' + l[1] + '">' + l[0] + '</span></td></tr>'; }).join('') + '</tbody></table></div>' +
+        '<label class="row mt12 small" style="gap:8px"><input type="checkbox" id="hsAll"' + (all ? ' checked' : '') + '> นำเข้าทับรอบย้อนหลังที่ครบแล้วด้วย (ไม่จำเป็น)</label>' +
+        '<div class="row mt12"><button class="btn pri" id="hsGo"' + (todo.length ? '' : ' disabled') + '>' + icon('db') + 'เริ่มนำเข้า ' + todo.length + ' รอบ</button></div>';
+      $('#hsAll').onchange = plan;
+      $('#hsGo').onclick = function () {
+        askPassword('นำเข้าข้อมูลย้อนหลัง', 'นำเข้า ' + todo.length + ' รอบ ระหว่างนำเข้าจะล็อกหน้าจอไว้ กรุณาอย่าปิดหน้านี้').then(function (x) {
+          if (!x) return;
+          var needInit = all || !Object.keys(st).some(function (k) { return st[k].source === 'HISTORY'; });
+          Pages.settings.historyRun(pack, todo, x.password, needInit).then(function () { loadSt(); });
+        });
+      };
+    };
     $('#hsDrop').onclick = function () { $('#hsFile').click(); };
     $('#hsFile').onchange = function () {
       var f = this.files[0]; if (!f) return;
       var fr = new FileReader();
       fr.onload = function () {
-        var pack; try { pack = JSON.parse(fr.result); } catch (e) { return toast('ไฟล์ไม่ใช่ JSON', 'bad'); }
-        if (pack.kind !== 'PAYPOP_HISTORY') return toast('ไฟล์นี้ไม่ใช่ข้อมูลตั้งต้นของ PayPop', 'bad');
-        var todo = pack.rounds.filter(function (r) { return !have[r.roundId] || have[r.roundId].source === 'HISTORY'; });
-        $('#hsInfo').innerHTML = '<div class="callout info">' + icon('info') + '<div>พบ <b>' + pack.rounds.length + ' รอบ</b> (' + esc(R.roundName(pack.rounds[0].roundId)) + ' – ' + esc(R.roundName(pack.rounds[pack.rounds.length - 1].roundId)) + ') · ' + fmt0(pack.rounds.reduce(function (s, r) { return s + r.docs.length; }, 0)) + ' เอกสาร · รายการรายได้ ' + pack.items.length + ' รายการ<br>จะนำเข้า ' + todo.length + ' รอบ (ข้ามรอบที่เป็นรอบใช้งานจริง)</div></div>' +
-          '<div class="meter mt12" style="height:12px"><span id="hsBar" style="width:0;background:linear-gradient(90deg,var(--pri),var(--pri-2))"></span></div><p class="small muted" id="hsTxt"></p><button class="btn pri" id="hsGo">' + icon('db') + 'เริ่มนำเข้า</button>';
-        $('#hsGo').onclick = function () {
-          var b = this;
-          askPassword('นำเข้าข้อมูลย้อนหลัง', 'ใช้เวลาประมาณ 1–3 นาที กรุณาอย่าปิดหน้านี้').then(function (x) {
-            if (!x) return; b.disabled = true;
-            var i = 0, bar = $('#hsBar'), txt = $('#hsTxt');
-            txt.textContent = 'ตั้งตารางรายการรายได้…';
-            api('historyInit', { password: x.password, categories: pack.categories, items: pack.items, deductTemplate: pack.deductTemplate }).then(function () {
-              var next = function () {
-                if (i >= todo.length) { txt.textContent = 'เสร็จแล้ว 🎉 กำลังโหลดข้อมูลใหม่…'; bar.style.width = '100%'; confetti(); return api('bootstrap', {}).then(function (bt) { setBoot(bt); updateRoundPick(); toast('นำเข้าข้อมูลย้อนหลัง ' + todo.length + ' รอบเรียบร้อย', 'ok'); if (!S.roundId) S.roundId = pickDefaultRound(); refreshPage(); }); }
-                var r = todo[i]; txt.textContent = 'กำลังนำเข้า ' + r.name + ' (' + (i + 1) + '/' + todo.length + ')';
-                return api('historyRound', { round: r, docCols: pack.docCols }).then(function () { i++; bar.style.width = Math.round(i / todo.length * 100) + '%'; return next(); });
-              };
-              return next();
-            }).catch(function (e) { b.disabled = false; fail(e); });
-          });
-        };
+        var pk; try { pk = JSON.parse(fr.result); } catch (e) { return toast('ไฟล์ไม่ใช่ JSON', 'bad'); }
+        if (pk.kind !== 'PAYPOP_HISTORY') return toast('ไฟล์นี้ไม่ใช่ข้อมูลตั้งต้นของ PayPop', 'bad');
+        pack = pk;
+        if (st) plan(); else $('#hsInfo').innerHTML = '<div class="sk" style="height:80px"></div>';
       };
       fr.readAsText(f, 'UTF-8');
     };
+  },
+
+  /** หน้าต่างนำเข้าย้อนหลัง: ส่งทีละ 2–3 เดือน · ลองใหม่อัตโนมัติ · ทำต่อจากจุดเดิมได้ · ล็อกการเปลี่ยนหน้า */
+  historyRun: function (pack, todo, password, needInit) {
+    return new Promise(function (resolve) {
+      var ov = document.createElement('div'); ov.className = 'ov';
+      ov.innerHTML = '<div class="modal mid" role="dialog" aria-modal="true" aria-label="กำลังนำเข้าข้อมูลย้อนหลัง"><div class="modal-b" style="text-align:center;padding-top:22px">' +
+        '<div id="hrMas">' + mascot(84, 'think') + '</div><h3 style="margin:10px 0 2px" id="hrTitle">กำลังนำเข้าข้อมูลย้อนหลัง</h3><p class="small muted" style="margin:0 0 12px" id="hrSub">กรุณาอย่าปิดหรือเปลี่ยนหน้า</p>' +
+        '<div class="meter" style="height:14px"><span id="hrBar" style="width:2%;background:linear-gradient(90deg,var(--pri),var(--pri-2));transition:width .5s"></span></div>' +
+        '<div class="row mt12 small" style="justify-content:space-between"><span id="hrTxt">เตรียมข้อมูล…</span><span class="num muted" id="hrTime"></span></div>' +
+        '<div id="hrLog" class="small t2" style="text-align:left;max-height:150px;overflow:auto;margin-top:10px;border-top:1px dashed var(--line);padding-top:8px"></div>' +
+        '<div class="row mt12" id="hrAct" style="justify-content:center"></div></div></div>';
+      document.body.appendChild(ov);
+      S.bulk = true;
+      var unload = function (e) { e.preventDefault(); e.returnValue = ''; return ''; };
+      window.addEventListener('beforeunload', unload);
+      var t0 = Date.now(), total = todo.length, queue = todo.slice(), doneN = 0, docsN = 0, msPer = 0;
+      var log = function (h) { var d = document.createElement('div'); d.innerHTML = h; $('#hrLog').appendChild(d); $('#hrLog').scrollTop = 1e6; };
+      var tick = setInterval(function () {
+        var sec = Math.round((Date.now() - t0) / 1000), eta = doneN && queue.length ? Math.round(msPer * queue.length / 1000) : 0;
+        $('#hrTime').textContent = Math.floor(sec / 60) + ':' + ('0' + sec % 60).slice(-2) + (eta ? ' · เหลือ ~' + (eta > 90 ? Math.round(eta / 60) + ' นาที' : eta + ' วิ') : '');
+      }, 1000);
+      var end = function (ok) {
+        clearInterval(tick); S.bulk = false; window.removeEventListener('beforeunload', unload);
+        if (!ok) return;
+        $('#hrBar').style.width = '100%'; $('#hrMas').innerHTML = mascot(84, 'wow'); $('#hrTitle').textContent = 'นำเข้าเสร็จแล้ว 🎉'; $('#hrSub').textContent = doneN + ' รอบ · ' + fmt0(docsN) + ' เอกสาร'; $('#hrTxt').textContent = 'กำลังโหลดข้อมูลใหม่…';
+        confetti();
+        api('bootstrap', {}).then(function (bt) { setBoot(bt); updateRoundPick(); if (!S.roundId) S.roundId = pickDefaultRound(); }).catch(function () { }).then(function () {
+          $('#hrTxt').textContent = 'เรียบร้อย'; $('#hrAct').innerHTML = '<button class="btn pri" id="hrOk">' + icon('ok') + 'ตกลง</button>';
+          $('#hrOk').onclick = function () { ov.remove(); toast('นำเข้าข้อมูลย้อนหลัง ' + doneN + ' รอบเรียบร้อย', 'ok'); refreshPage(); resolve(true); };
+        });
+      };
+      var stop = function (e) {
+        $('#hrMas').innerHTML = mascot(84, 'sleep'); $('#hrTitle').textContent = 'หยุดไว้ชั่วคราว';
+        $('#hrSub').innerHTML = esc(e && e.message ? e.message : String(e)) + '<br>ข้อมูลที่นำเข้าแล้ว ' + doneN + ' รอบ บันทึกไว้เรียบร้อย กด “นำเข้าต่อ” เพื่อทำต่อจากจุดเดิม';
+        $('#hrAct').innerHTML = '<button class="btn ghost" id="hrClose">ปิด</button><button class="btn pri" id="hrGo">' + icon('db') + 'นำเข้าต่อ (' + queue.length + ' รอบ)</button>';
+        S.bulk = false;
+        $('#hrClose').onclick = function () { end(false); ov.remove(); resolve(false); };
+        $('#hrGo').onclick = function () { S.bulk = true; $('#hrAct').innerHTML = ''; $('#hrMas').innerHTML = mascot(84, 'think'); $('#hrTitle').textContent = 'กำลังนำเข้าข้อมูลย้อนหลัง'; $('#hrSub').textContent = 'กรุณาอย่าปิดหรือเปลี่ยนหน้า'; start(); };
+      };
+      var WAIT = [3000, 6000, 12000, 20000, 30000];
+      var call = function (action, payload, label) {
+        var n = 0;
+        var go = function () {
+          return api(action, payload).catch(function (e) {
+            if (e.code && e.code !== 'ERROR' && e.code !== 'SYSTEM_ERROR') throw e;   // รหัสผ่านผิด / ไม่มีสิทธิ์ → ไม่ลองซ้ำ
+            if (n >= WAIT.length) throw e;
+            var w = WAIT[n++];
+            $('#hrTxt').textContent = label + ' — Google ตอบช้า ลองใหม่ครั้งที่ ' + n + '/' + WAIT.length + ' ใน ' + Math.round(w / 1000) + ' วิ…';
+            return new Promise(function (r) { setTimeout(r, w); }).then(go);
+          });
+        };
+        return go();
+      };
+      var batchOf = function () {
+        var out = [], bytes = 0, max = msPer && msPer > 40000 ? 1 : msPer && msPer < 12000 ? 4 : 2;
+        while (queue.length && out.length < max) { var sz = JSON.stringify(queue[0]).length; if (out.length && bytes + sz > 700000) break; bytes += sz; out.push(queue.shift()); }
+        return out;
+      };
+      var run = function () {
+        if (!queue.length) return end(true);
+        var b = batchOf(), names = b.map(function (r) { return R.ymLabel(r.roundId); }).join(', ');
+        $('#hrTxt').textContent = 'กำลังนำเข้า ' + names + ' (' + (doneN + 1) + '–' + (doneN + b.length) + '/' + total + ')';
+        var t1 = Date.now();
+        call('historyRound', { rounds: b, docCols: pack.docCols }, 'นำเข้า ' + names).then(function (res) {
+          var left = {}; (res.left || []).forEach(function (id) { left[id] = 1; });
+          b.filter(function (r) { return left[r.roundId]; }).reverse().forEach(function (r) { queue.unshift(r); });
+          (res.done || []).forEach(function (d) { doneN++; docsN += d.docs; log('✅ ' + esc(R.roundName(d.roundId)) + ' · ' + fmt0(d.docs) + ' เอกสาร'); });
+          (res.skipped || []).forEach(function (d) { doneN++; log('⏭️ ' + esc(d.reason)); });
+          var k = (res.done || []).length + (res.skipped || []).length;
+          if (k) msPer = (Date.now() - t1) / k;
+          $('#hrBar').style.width = Math.max(2, Math.round(doneN / total * 100)) + '%';
+          run();
+        }, function (e) { b.reverse().forEach(function (r) { queue.unshift(r); }); stop(e); });
+      };
+      var start = function () {
+        if (!needInit) return run();
+        $('#hrTxt').textContent = 'ตั้งตารางรายการรายได้ ' + fmt0(pack.items.length) + ' รายการ…';
+        call('historyInit', { password: password, categories: pack.categories, items: pack.items, deductTemplate: pack.deductTemplate }, 'ตั้งตารางรายการรายได้').then(function (r) {
+          needInit = false; log('✅ ตารางรายการรายได้ ' + fmt0(r.items) + ' รายการ'); run();
+        }, function (e) { if (e.code && e.code !== 'ERROR' && e.code !== 'SYSTEM_ERROR') { end(false); ov.remove(); fail(e); resolve(false); } else stop(e); });
+      };
+      start();
+    });
   },
 
   /* ---------------- ประวัติการใช้งาน */

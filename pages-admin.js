@@ -180,7 +180,12 @@ Pages.settings = {
     box.innerHTML = '<div class="grid g2"><div class="card"><div class="card-h"><h2>' + icon('db') + 'นำเข้าข้อมูลย้อนหลังจาก Excel เดิม ' + q('ระบบส่งข้อมูลทีละ 2–3 เดือนต่อครั้ง ถ้าเน็ตหรือ Google สะดุด จะลองใหม่ให้เอง และกด “นำเข้าต่อ” ได้จากจุดเดิม ไม่ต้องเริ่มใหม่') + '</h2></div>' +
       '<p class="small">ใช้ไฟล์ <span class="mono">paypop_ข้อมูลตั้งต้น_2568-2569.json</span> (สร้างจากไฟล์สรุปบันทึกการจ่ายเดิม) ระบบจะ</p><ul class="small" style="margin-top:0"><li>ตั้งตารางรายการรายได้ หมวด และความถี่ (ไม่ทับรายการที่แก้เองแล้ว)</li><li>สร้างรอบย้อนหลังแบบปิดแล้ว ใช้ทำกราฟแนวโน้ม ค่าเฉลี่ย และตรวจ WL</li><li>นำเข้าเฉพาะเดือนที่ยังไม่มีหรือข้อมูลไม่ตรงไฟล์ · นำเข้าค้างไว้ก็ทำต่อได้</li></ul>' +
       '<div class="drop" id="hsDrop" tabindex="0" role="button">' + icon('up', 'big') + '<b>เลือกไฟล์ .json</b><input type="file" id="hsFile" accept=".json" hidden></div><div id="hsInfo" class="mt12"></div></div>' +
-      '<div class="card"><div class="card-h"><h3>' + icon('cal') + 'รอบที่มีในระบบ</h3></div><div id="hsHave"><div class="sk" style="height:60px"></div></div></div></div>';
+      '<div class="grid" style="align-content:start"><div class="card"><div class="card-h"><h3>' + icon('cal') + 'รอบที่มีในระบบ</h3></div><div id="hsHave"><div class="sk" style="height:60px"></div></div></div>' +
+      '<div class="card"><div class="card-h"><h3>' + icon('tag') + 'รายการรายได้ HRMi ' + q('ชื่อรายได้จริงและรหัสจาก HRMi ใช้ตรวจชื่อที่วางเข้ามา และแสดงรหัสรายได้ · อัปโหลดไฟล์ Export รายการรายได้ (คอลัมน์ IncomeDeductCode, IncomeDeductName)') + '</h3></div>' +
+      '<p class="small" style="margin:0">มีในระบบ <b>' + fmt0((S.boot.incomeCodes || []).length) + '</b> รายการ</p><div class="row mt12"><button class="btn sm" id="icUp">' + icon('up') + 'อัปโหลดไฟล์รายการรายได้</button><input type="file" id="icFile" accept=".xlsx,.xls,.xml" hidden></div></div>' +
+      '<div class="card" style="border-color:color-mix(in srgb,var(--bad) 35%,transparent)"><div class="card-h"><h3 style="color:var(--bad)">' + icon('alert') + 'เริ่มข้อมูลใหม่ทั้งหมด</h3></div>' +
+      '<p class="small" style="margin:0">ล้างรอบทั้งหมด (รวมรอบที่เปิดอยู่) เอกสาร ประมาณการ เช็กลิสต์ SMC เงินหัก รายการรายได้ สถิติ และไฟล์คลังบน Drive · หมวดกลับเป็นค่าตั้งต้น<br><b>คงไว้:</b> ผู้ใช้/รหัสผ่าน ค่าระบบ และประวัติการใช้งาน</p>' +
+      '<div class="row mt12"><button class="btn danger sm" id="rsGo">' + icon('trash') + 'เริ่มข้อมูลใหม่ทั้งหมด…</button></div></div></div></div>';
     var showHave = function () {
       var ids = Object.keys(st || {}), hs = ids.filter(function (k) { return st[k].source === 'HISTORY'; });
       $('#hsHave').innerHTML = '<p class="small muted" style="margin:0">' + ids.length + ' รอบ · ย้อนหลัง ' + hs.length + ' รอบ' + (hs.length ? ' (' + esc(R.ymLabel(hs.sort()[0])) + ' – ' + esc(R.ymLabel(hs[hs.length - 1])) + ')' : '') + '</p>';
@@ -213,6 +218,31 @@ Pages.settings = {
       };
     };
     $('#hsDrop').onclick = function () { $('#hsFile').click(); };
+    $('#icUp').onclick = function () { $('#icFile').click(); };
+    $('#icFile').onchange = function () {
+      var f = this.files[0]; if (!f) return;
+      XLSX.readFile(f).then(function (x) {
+        var g = x.grid || [], hi = -1;
+        for (var i = 0; i < Math.min(g.length, 10); i++) if (g[i].indexOf('IncomeDeductName') >= 0) { hi = i; break; }
+        if (hi < 0) throw new Error('ไม่พบคอลัมน์ IncomeDeductCode / IncomeDeductName ในไฟล์');
+        var h = g[hi], ic = h.indexOf('IncomeDeductCode'), iN = h.indexOf('IncomeDeductName'), iT = h.indexOf('IncomeDeductType');
+        var rows = g.slice(hi + 1).filter(function (r) { return r[iN]; }).map(function (r) { return { code: r[ic], name: r[iN], type: iT >= 0 ? r[iT] : '' }; });
+        return api('saveIncomeCodes', { rows: rows });
+      }).then(function (r) { S.boot.incomeCodes = r.incomeCodes; setBoot(S.boot); toast('บันทึกรายการรายได้ ' + fmt0(r.count) + ' รายการ', 'ok'); Pages.settings.tab_history(box); }, fail);
+    };
+    $('#rsGo').onclick = function () {
+      askPassword('เริ่มข้อมูลใหม่ทั้งหมด', 'ข้อมูลทุกรอบจะถูกลบและกู้คืนไม่ได้ จากนั้นนำเข้าไฟล์ข้อมูลตั้งต้นใหม่ได้ที่หน้านี้',
+        '<div class="field mt12"><label for="pw-extra">พิมพ์คำว่า <b>ล้างข้อมูลทั้งหมด</b> เพื่อยืนยัน</label><input id="pw-extra" class="inp" autocomplete="off"></div>').then(function (x) {
+        if (!x) return;
+        api('resetSystem', { password: x.password, phrase: x.extra }).then(function (r) {
+          return api('bootstrap', {}).then(function (bt) {
+            setBoot(bt); S.roundId = null; S.data = null; updateRoundPick();
+            toast('ล้างข้อมูลแล้ว (' + fmt0(r.counts.Rounds || 0) + ' รอบ) — นำเข้าไฟล์ข้อมูลตั้งต้นได้เลย', 'ok', 6000);
+            Pages.settings.tab_history(box);
+          });
+        }).catch(fail);
+      });
+    };
     $('#hsFile').onchange = function () {
       var f = this.files[0]; if (!f) return;
       var fr = new FileReader();
@@ -302,7 +332,7 @@ Pages.settings = {
       var start = function () {
         if (!needInit) return run();
         $('#hrTxt').textContent = 'ตั้งตารางรายการรายได้ ' + fmt0(pack.items.length) + ' รายการ…';
-        call('historyInit', { password: password, categories: pack.categories, items: pack.items, deductTemplate: pack.deductTemplate }, 'ตั้งตารางรายการรายได้').then(function (r) {
+        call('historyInit', { password: password, categories: pack.categories, items: pack.items, deductTemplate: pack.deductTemplate, incomeCodes: pack.incomeCodes || [] }, 'ตั้งตารางรายการรายได้').then(function (r) {
           needInit = false; log('✅ ตารางรายการรายได้ ' + fmt0(r.items) + ' รายการ'); run();
         }, function (e) { if (e.code && e.code !== 'ERROR' && e.code !== 'SYSTEM_ERROR') { end(false); ov.remove(); fail(e); resolve(false); } else stop(e); });
       };

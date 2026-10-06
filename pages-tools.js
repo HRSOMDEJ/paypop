@@ -124,7 +124,9 @@ Pages.deduct = {
     el.innerHTML += '<div id="ddBody"><div class="card"><div class="sk" style="height:300px"></div></div></div><div id="ddBulk"></div>';
     var rid = S.roundId;
     if (P.cache && P.cache.roundId === rid && S.dirty === 'deduct') return P.draw();
-    api('getDeductions', { roundId: rid }).then(function (res) { if (S.roundId !== rid) return; P.cache = { roundId: rid, res: res, rows: res.rows.map(function (r) { return Object.assign({}, r); }) }; P.draw(); }, function (e) { loadErr($('#ddBody'), e, function () { P.render(el); }); });
+    var ck = keyFor('ded:' + rid), hit = lsGet(ck);
+    if (hit) { P.cache = { roundId: rid, res: hit, rows: hit.rows.map(function (r) { return Object.assign({}, r); }) }; P.draw(); }
+    api('getDeductions', { roundId: rid }).then(function (res) { if (S.roundId !== rid || S.dirty === 'deduct') return; lsSet(ck, res); P.cache = { roundId: rid, res: res, rows: res.rows.map(function (r) { return Object.assign({}, r); }) }; P.draw(); }, function (e) { loadErr($('#ddBody'), e, function () { P.render(el); }); });
   },
   sums: function (rows) {
     var out = rows.map(function () { return null; });
@@ -165,7 +167,7 @@ Pages.deduct = {
     $('#ddX').onclick = function () { P.exportX(); };
     if ($('#ddSave')) $('#ddSave').onclick = function () {
       var b = this; b.classList.add('loading');
-      api('saveDeductions', { roundId: S.roundId, rows: rows, asTemplate: $('#ddTpl').checked }).then(function (res) { S.dirty = null; P.cache = { roundId: S.roundId, res: res, rows: res.rows.map(function (r) { return Object.assign({}, r); }) }; toast('บันทึกรายการเงินหักแล้ว', 'ok'); P.draw(); }, function (e) { b.classList.remove('loading'); fail(e); });
+      api('saveDeductions', { roundId: S.roundId, rows: rows, asTemplate: $('#ddTpl').checked }).then(function (res) { S.dirty = null; lsSet(keyFor('ded:' + S.roundId), res); P.cache = { roundId: S.roundId, res: res, rows: res.rows.map(function (r) { return Object.assign({}, r); }) }; toast('บันทึกรายการเงินหักแล้ว', 'ok'); P.draw(); }, function (e) { b.classList.remove('loading'); fail(e); });
     };
   },
   editSum: function (i) {

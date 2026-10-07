@@ -521,3 +521,11 @@ html.side-mini .side .round-pick .nm-s .i { width: 18px; height: 18px; color: va
 html.side-mini .side .round-pick .nm-s .dot { position: absolute; top: -2px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
 html.side-mini .nav a .badge { top: -3px; right: -1px; min-width: 16px; height: 16px; font-size: .58rem; padding: 0 3px; box-shadow: 0 0 0 2px var(--surface); }
 .nowrap { white-space: nowrap; }
+/* ตรวจแพทย์ SMC: ตารางคู่เอกสาร คอลัมน์คงที่ แถวตรงกัน */
+.smtbl { table-layout: fixed; min-width: 860px; }
+.smtbl td { vertical-align: middle; }
+.smdoc { display: flex; justify-content: space-between; gap: 10px; font-size: .86rem; line-height: 1.5; max-width: 190px; }
+.smdoc .num { font-variant-numeric: tabular-nums; }
+.smdoc.bad { color: var(--bad); }
+.smact { white-space: nowrap; text-align: right; }
+.smact .btn + .btn { margin-left: 4px; }

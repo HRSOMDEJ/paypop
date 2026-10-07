@@ -2,7 +2,7 @@
  * core.js — แกนหน้าเว็บ PayPop: เครือข่าย แคช ล็อกอิน เมนู ชิ้นส่วน UI (toast/modal/drawer/popover/tooltip/confetti) และตัวนำทาง
  * หลักการความเร็ว: แสดงข้อมูลที่จำไว้ในเครื่องทันที → ถามหลังบ้านเฉพาะส่วนที่เปลี่ยน (rev/dv) · บันทึกครั้งเดียวต่อหน้า
  */
-var APP_BUILD = '2569-10-07.1', APP_BUILD_TH = '7 ต.ค. 2569';
+var APP_BUILD = '2569-10-07.2', APP_BUILD_TH = '7 ต.ค. 2569';
 var S = { codes: {}, token: null, boot: null, roundId: null, data: null, items: {}, itemsList: [], cats: {}, page: null, busy: 0, dirty: null };
 
 /* ================================================================ utils */

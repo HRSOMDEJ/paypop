@@ -3,11 +3,19 @@
  */
 Pages.smc = {
   st: null,   // null = หน้ารายการเอกสาร · {…} = กำลังตรวจ 1 คู่เอกสาร
-  /** จัดกลุ่มเอกสาร 80/20 ของรอบ (ชื่อรายได้มีคำ kw80/kw20 + รายละเอียดมี/ไม่มีคำ inc/exc) → คู่เอกสาร */
+  /**
+   * คู่เอกสาร 80/20 ของรอบ (1 แถว = 1 ชุดตรวจ)
+   * 1) ชุดที่บันทึกแล้ว = แถวของตัวเอง แสดงเอกสารที่บันทึกจริง (เอกสารนั้นไม่ไปโผล่แถวอื่นอีก)
+   * 2) เอกสารที่เหลือ จับคู่ด้วยยอด 20% = 80% × 20/80 ก่อน (ข้ามกลุ่มได้ เช่น 20% ที่รายละเอียดว่าง)
+   * 3) ที่ยังเหลือ จับคู่ในกลุ่มเดียวกันด้วยเดือนงาน / ใบเดียวต่อใบเดียว · ที่เหลือแสดงเดี่ยว
+   */
   pairs: function (d) {
-    var groups = S.boot.smcGroups || [], docs = Logic.liveDocs(d).filter(function (x) { return /\d\s*0\s*%/.test(x.incomeName); });
+    var groups = S.boot.smcGroups || [], rate = +S.boot.settings.RATE_80 || 80;
+    var all = Logic.liveDocs(d), docs = all.filter(function (x) { return /\d\s*0\s*%/.test(x.incomeName); });
+    var byNo = {}; all.forEach(function (x) { byNo[x.docNo] = x; });
     var words = function (s) { return String(s || '').split('|').map(function (w) { return w.trim(); }).filter(Boolean); };
     var hit = function (txt, list) { return list.some(function (w) { return txt.indexOf(w) >= 0; }); };
+    var OTHER = { id: 'OTHER', name: 'อื่น ๆ (ยังไม่เข้ากลุ่ม)' };
     var cls = function (x) {
       for (var i = 0; i < groups.length; i++) {
         var g = groups[i], side = g.kw80 && x.incomeName.indexOf(g.kw80) >= 0 ? '80' : g.kw20 && x.incomeName.indexOf(g.kw20) >= 0 ? '20' : '';
@@ -17,43 +25,42 @@ Pages.smc = {
         if (exc.length && hit(rm, exc)) continue;
         return { g: g, side: side };
       }
-      return { g: { id: 'OTHER', name: 'อื่น ๆ (ยังไม่เข้ากลุ่ม)' }, side: /8\s*0\s*%/.test(x.incomeName) ? '80' : '20' };
+      return { g: OTHER, side: /8\s*0\s*%/.test(x.incomeName) ? '80' : '20' };
     };
-    var by = {}, order = [];
-    docs.forEach(function (x) {
-      var c = cls(x), k = c.g.id;
-      if (!by[k]) { by[k] = { g: c.g, d80: [], d20: [] }; order.push(k); }
-      by[k][c.side === '80' ? 'd80' : 'd20'].push(x);
+    var gOf = function (id) { return groups.filter(function (g) { return g.id === id; })[0] || null; };
+    var ym = function (x) { return R.workYm(x.remark, x.jobName) || ''; };
+    var list = function (s) { return String(s || '').split(',').filter(Boolean); };
+    var obj = function (no) { return byNo[no] || { docNo: no, incomeName: 'ไม่พบเอกสารนี้ในรอบแล้ว', remark: '', income: 0, missing: true }; };
+    var out = [], used = {};
+    // 1) ชุดที่บันทึกแล้ว
+    (d.smc || []).forEach(function (b) {
+      var n80 = list(b.docs80), n20 = list(b.docs20);
+      n80.concat(n20).forEach(function (n) { used[n] = 1; });
+      out.push({ g: gOf(b.groupId) || { id: b.groupId, name: b.title || b.groupId }, d80: n80.map(obj), d20: n20.map(obj), ym: '', batch: b });
     });
+    // 2) เอกสารที่เหลือ
+    var c80 = [], c20 = [];
+    docs.forEach(function (x) { if (used[x.docNo]) return; var c = cls(x); x._g = c.g; (c.side === '80' ? c80 : c20).push(x); });
+    var take = {};
+    c80.forEach(function (a) {
+      var want = a.income * (100 - rate) / rate;
+      var m = c20.filter(function (z) { return !take[z.docNo] && Math.abs(z.income - want) <= 1; });
+      m.sort(function (p, q) { return (p._g.id === a._g.id ? 0 : 1) - (q._g.id === a._g.id ? 0 : 1); });
+      if (m.length) { take[m[0].docNo] = 1; take[a.docNo] = 1; out.push({ g: a._g, d80: [a], d20: [m[0]], ym: ym(a) }); }
+    });
+    // 3) ที่ยังเหลือ: ในกลุ่มเดียวกัน
+    var left80 = c80.filter(function (a) { return !take[a.docNo]; }), left20 = c20.filter(function (z) { return !take[z.docNo]; });
+    left80.forEach(function (a) {
+      var same = left20.filter(function (z) { return !take[z.docNo] && z._g.id === a._g.id; });
+      var m = same.filter(function (z) { return ym(a) && ym(z) === ym(a); });
+      if (!m.length && same.length === 1 && left80.filter(function (o) { return o._g.id === a._g.id; }).length === 1) m = same;
+      if (m.length) take[m[0].docNo] = 1;
+      out.push({ g: a._g, d80: [a], d20: m.slice(0, 1), ym: ym(a) });
+    });
+    left20.forEach(function (z) { if (!take[z.docNo]) out.push({ g: z._g, d80: [], d20: [z], ym: ym(z) }); });
     var gi = function (id) { for (var i = 0; i < groups.length; i++) if (groups[i].id === id) return i; return 999; };
-    order.sort(function (a, b) { return gi(a) - gi(b); });
-    var out = [];
-    order.forEach(function (k) {
-      var b = by[k], ym = function (x) { return R.workYm(x.remark, x.jobName) || ''; }, used = {};
-      if (b.d80.length <= 1 && b.d20.length <= 1) { out.push({ g: b.g, d80: b.d80, d20: b.d20, ym: b.d80[0] ? ym(b.d80[0]) : b.d20[0] ? ym(b.d20[0]) : '' }); return; }
-      b.d80.forEach(function (a) {
-        var m = ym(a), mate = b.d20.filter(function (z) { return !used[z.docNo] && m && ym(z) === m; });
-        if (!mate.length && b.d20.length === 1 && b.d80.length === 1) mate = b.d20;
-        mate.slice(0, 1).forEach(function (z) { used[z.docNo] = 1; });
-        out.push({ g: b.g, d80: [a], d20: mate.slice(0, 1), ym: m });
-      });
-      b.d20.forEach(function (z) { if (!used[z.docNo]) out.push({ g: b.g, d80: [], d20: [z], ym: ym(z) }); });
-    });
-    // เอกสาร 80% ที่ยังไม่มีคู่ ↔ เอกสาร 20% ที่ยังไม่มีคู่ (เช่น 20% ที่รายละเอียดว่าง) → จับคู่ด้วยยอด 20% = 80% × 20/80 (คลาดได้ 1 บาท)
-    var rate = +S.boot.settings.RATE_80 || 80, l20 = out.filter(function (p) { return !p.d80.length && p.d20.length === 1; });
-    out.filter(function (p) { return p.d80.length === 1 && !p.d20.length; }).forEach(function (p) {
-      var want = p.d80[0].income * (100 - rate) / rate, m = l20.filter(function (z) { return !z.gone && Math.abs(z.d20[0].income - want) <= 1; })[0];
-      if (m) { p.d20 = m.d20; m.gone = true; }
-    });
-    out = out.filter(function (p) { return !p.gone; });
-    // ผูกชุดตรวจที่บันทึกไว้ (เลขที่เอกสาร 80% หรือ 20% ตรงกัน)
-    var saved = (d.smc || []).slice(), claim = {};
-    out.forEach(function (p) {
-      var nos = p.d80.concat(p.d20).map(function (x) { return x.docNo; });
-      p.batch = saved.filter(function (s) { return !claim[s.id] && String(s.docs80 + ',' + s.docs20).split(',').some(function (n) { return n && nos.indexOf(n) >= 0; }); })[0] || null;
-      if (p.batch) claim[p.batch.id] = 1;
-    });
-    saved.forEach(function (s) { if (!claim[s.id]) out.push({ g: { id: s.groupId, name: s.title || s.groupId }, d80: [], d20: [], ym: '', batch: s, orphan: true }); });
+    var firstNo = function (p) { var x = p.d80[0] || p.d20[0]; return x ? x.docNo : ''; };
+    out.sort(function (a, b) { return gi(a.g.id) - gi(b.g.id) || (firstNo(a) < firstNo(b) ? -1 : 1); });
     return out;
   },
   render: function (el) {
@@ -72,7 +79,7 @@ Pages.smc = {
     var done = pairs.filter(function (p) { return p.batch; }), ok = done.filter(function (p) { return p.batch.result === 'MATCH'; });
     var people = done.reduce(function (s, p) { return s + (p.batch.lines || []).length; }, 0), flags = done.reduce(function (s, p) { return s + (+p.batch.flags || 0); }, 0);
     var chips = function (list) {
-      return list.length ? list.map(function (x) { return '<div class="t1 mono" data-tip="' + esc(x.incomeName + (x.remark ? ' · ' + x.remark : '')) + '">' + esc(x.docNo.slice(-4)) + ' <span class="num">' + fmt(x.income) + '</span></div>'; }).join('') : '<span class="muted small">—</span>';
+      return list.length ? list.map(function (x) { return '<div class="smdoc' + (x.missing ? ' bad' : '') + '" data-tip="' + esc(x.docNo + ' · ' + x.incomeName + (x.remark ? ' · ' + x.remark : '')) + '"><span class="mono">' + esc(x.docNo.slice(-4)) + '</span><span class="num">' + (x.missing ? 'ไม่พบ' : fmt(x.income)) + '</span></div>'; }).join('') : '<span class="muted small">—</span>';
     };
     var res = function (p) {
       var b = p.batch;
@@ -83,19 +90,18 @@ Pages.smc = {
     };
     el.innerHTML += lockedNote() +
       '<div class="grid g4 mb12">' +
-      '<div class="card kpi"><span class="ico t-vio">' + icon('docs') + '</span><div class="kpi-l">คู่เอกสาร 80/20 ในรอบ</div><div class="kpi-v num">' + pairs.filter(function (p) { return !p.orphan; }).length + '</div></div>' +
+      '<div class="card kpi"><span class="ico t-vio">' + icon('docs') + '</span><div class="kpi-l">คู่เอกสาร 80/20 ในรอบ</div><div class="kpi-v num">' + pairs.length + '</div></div>' +
       '<div class="card kpi"><span class="ico t-pri">' + icon('steth') + '</span><div class="kpi-l">ตรวจแล้ว</div><div class="kpi-v num">' + done.length + '</div><div class="kpi-s">ตรงกัน ' + ok.length + '</div></div>' +
       '<div class="card kpi"><span class="ico t-ok">' + icon('users') + '</span><div class="kpi-l">แพทย์ที่ตรวจแล้ว</div><div class="kpi-v num">' + fmt0(people) + '</div><div class="kpi-s">คน (นับซ้ำได้ถ้าอยู่หลายเอกสาร)</div></div>' +
       '<div class="card kpi"><span class="ico ' + (flags ? 't-bad' : 't-ok') + '">' + icon('flag') + '</span><div class="kpi-l">ติดธงพ้นสภาพ/ไม่พบ</div><div class="kpi-v num">' + flags + '</div></div></div>' +
       '<div class="card"><div class="card-h"><h2>' + icon('docs') + 'เอกสาร 80% / 20% ของ' + esc(d.round.name) + '</h2>' + q('ระบบจับคู่จากชื่อรายได้ + รายละเอียด ตามกลุ่มที่ตั้งไว้ใน ตั้งค่า › กลุ่มแพทย์ SMC · กด "ตรวจ" ทีละแถว แต่ละแถวบันทึกแยกกัน ไม่ทับกัน') +
       '<span class="grow"></span>' + (done.length ? '<button class="btn sm" id="smXall">' + icon('dl') + 'Excel ทั้งรอบ</button>' : '') + (open ? '<button class="btn sm" id="smFree">' + icon('plus') + 'ตรวจโดยเลือกเอกสารเอง</button>' : '') + '</div>' +
-      (pairs.length ? '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>กลุ่ม</th><th>เดือนงาน</th><th>เอกสาร 80% (จ่ายแพทย์)</th><th>เอกสาร 20% (ส่วน รพ.)</th><th>ผลตรวจ</th><th></th></tr></thead><tbody>' +
+      (pairs.length ? '<div class="tbl-wrap"><table class="tbl smtbl"><colgroup><col style="width:22%"><col style="width:9%"><col style="width:19%"><col style="width:19%"><col style="width:17%"><col style="width:14%"></colgroup>' +
+        '<thead><tr><th>กลุ่ม</th><th>เดือนงาน</th><th>เอกสาร 80% (จ่ายแพทย์)</th><th>เอกสาร 20% (ส่วน รพ.)</th><th>ผลตรวจ</th><th></th></tr></thead><tbody>' +
         pairs.map(function (p, i) {
           var b = p.batch;
-          return '<tr' + (p.orphan ? ' style="opacity:.85"' : '') + '><td style="min-width:150px"><div class="t1">' + esc(p.g.name) + '</div>' + (p.orphan ? '<div class="t2">ชุดที่เลือกเอกสารเอง</div>' : '') + '</td><td>' + esc(b && b.workMonth ? b.workMonth : p.ym ? R.ymLabel(p.ym) : '—') + '</td>' +
-            '<td>' + (p.orphan ? '<span class="mono small">' + esc(String(b.docs80 || '').split(',').map(function (n) { return n.slice(-4); }).join(', ') || '—') + '</span>' : chips(p.d80)) + '</td>' +
-            '<td>' + (p.orphan ? '<span class="mono small">' + esc(String(b.docs20 || '').split(',').map(function (n) { return n.slice(-4); }).join(', ') || '—') + '</span>' : chips(p.d20)) + '</td>' +
-            '<td>' + res(p) + '</td><td class="nowrap">' +
+          return '<tr><td><div class="t1">' + esc(p.g.name) + '</div></td><td>' + esc(b && b.workMonth ? b.workMonth : p.ym ? R.ymLabel(p.ym) : '—') + '</td>' +
+            '<td>' + chips(p.d80) + '</td><td>' + chips(p.d20) + '</td><td>' + res(p) + '</td><td class="smact">' +
             (b ? '<button class="btn xs" data-open="' + i + '">' + icon('eye') + 'ดูรายชื่อ/แก้</button>' : open ? '<button class="btn xs pri" data-open="' + i + '">' + icon('search') + 'ตรวจ</button>' : '') +
             (b && open ? '<button class="btn xs ghost" data-delb="' + esc(b.id) + '" aria-label="ลบชุดตรวจ">' + icon('trash') + '</button>' : '') + '</td></tr>';
         }).join('') + '</tbody></table></div>'
@@ -110,10 +116,11 @@ Pages.smc = {
   },
   /** ตรวจผลที่บันทึกไว้กับเอกสารปัจจุบันอีกครั้ง (เอกสารอาจถูกวางทับยอดใหม่) */
   recheck: function (p) {
-    var b = p.batch, docs = Logic.liveDocs(S.data), pick = function (s) { var l = String(s || '').split(',').filter(Boolean); return docs.filter(function (x) { return l.indexOf(x.docNo) >= 0; }); };
-    var d80 = pick(b.docs80), d20 = pick(b.docs20), t80 = R.sum(d80, 'income'), t20 = R.sum(d20, 'income');
-    if (!d80.length && !d20.length) return { ok: false, why: 'ไม่พบเอกสารในรอบ' };
-    var ok80 = !d80.length || Math.abs(t80 - R.money(b.sum80)) < 0.01, ok20 = !d20.length || Math.abs(t20 - R.money(b.sum20)) < 0.01;
+    var b = p.batch, n80 = String(b.docs80 || '').split(',').filter(Boolean), n20 = String(b.docs20 || '').split(',').filter(Boolean);
+    if (p.d80.concat(p.d20).some(function (x) { return x.missing; })) return { ok: false, why: 'เอกสารบางใบไม่อยู่ในรอบแล้ว' };
+    if (!n80.length || !n20.length) return { ok: false, why: 'ยังไม่ครบคู่ 80/20' };
+    var t80 = R.sum(p.d80, 'income'), t20 = R.sum(p.d20, 'income');
+    var ok80 = Math.abs(t80 - R.money(b.sum80)) < 0.01, ok20 = Math.abs(t20 - R.money(b.sum20)) < 0.01;
     if (!ok80 || !ok20) return { ok: false, why: 'ไม่ตรง ต่าง ' + fmt((ok80 ? 0 : R.money(b.sum80) - t80) + (ok20 ? 0 : R.money(b.sum20) - t20)) };
     return { ok: true };
   },
@@ -223,8 +230,9 @@ Pages.smc = {
   },
   pickDocs: function (kind) {
     var P = this, st = P.st, docs = Logic.liveDocs(S.data).filter(function (x) { return /\d\s*0\s*%/.test(x.incomeName); }), cur = kind === '80' ? st.docs80 : st.docs20;
+    var usedBy = {}; (S.data.smc || []).forEach(function (b) { if (b.id === st.id) return; String(b.docs80 + ',' + b.docs20).split(',').forEach(function (n) { if (n) usedBy[n] = b.title || b.groupId; }); });
     modal({ title: 'เลือกเอกสาร ' + kind + '%', icon: 'docs', mid: true, body: '<p class="muted small" style="margin:0">เอกสารในรอบนี้ที่ชื่อรายได้มี "…0%" · เลือกได้หลายใบ</p><div class="tbl-wrap tall"><table class="tbl"><tbody>' +
-      docs.map(function (x, i) { return '<tr><td class="c"><input type="checkbox" data-i="' + i + '"' + (cur.indexOf(x.docNo) >= 0 ? ' checked' : '') + '></td><td class="mono">' + esc(x.docNo) + '</td><td><div class="t1">' + esc(x.incomeName) + '</div><div class="t2">' + esc(x.remark || '') + '</div></td><td class="n">' + fmt(x.income) + '</td></tr>'; }).join('') + '</tbody></table></div>',
+      docs.map(function (x, i) { var u = usedBy[x.docNo]; return '<tr><td class="c"><input type="checkbox" data-i="' + i + '"' + (cur.indexOf(x.docNo) >= 0 ? ' checked' : '') + '></td><td class="mono">' + esc(x.docNo) + '</td><td><div class="t1">' + esc(x.incomeName) + '</div><div class="t2">' + esc(x.remark || '') + '</div>' + (u ? '<div class="t2" style="color:var(--bad)">ใช้ในชุดตรวจ "' + esc(u) + '" แล้ว</div>' : '') + '</td><td class="n">' + fmt(x.income) + '</td></tr>'; }).join('') + '</tbody></table></div>',
       actions: [{ label: 'ยกเลิก', cls: 'ghost', value: null }, { label: 'ใช้เอกสารที่เลือก', cls: 'pri', click: function (ov) {
         var list = $$('[data-i]', ov).filter(function (c) { return c.checked; }).map(function (c) { return docs[+c.getAttribute('data-i')].docNo; });
         if (kind === '80') st.docs80 = list; else st.docs20 = list;

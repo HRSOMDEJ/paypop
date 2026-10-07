@@ -110,7 +110,7 @@ Pages.import = {
     var d = S.data;
     el.innerHTML = pageHead('import', 'นำเข้าจาก HRMi', 'คัดลอกจากตาราง "บันทึกการจ่าย" ใน HRMi มาวาง หรือแนบไฟล์ Export · วางซ้ำได้ทุกเวลา ระบบเทียบด้วยเลขที่เอกสาร');
     if (!S.roundId) { el.innerHTML += noRound(); return; }
-    if (!d) { el.innerHTML += '<div class="card"><div class="sk" style="height:200px"></div></div>'; return; }
+    if (!d) { el.innerHTML += roundWait(); return; }
     if (d.round.status !== 'OPEN') { el.innerHTML += lockedNote(); return; }
     var views = String(S.boot.settings.VIEWS || '').split(/\r?\n/).filter(Boolean), last = lsGet(keyFor('lastView')) || views[0];
     el.innerHTML += '<div class="grid g3"><div class="span2 grid" id="impLeft">' +

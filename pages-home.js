@@ -54,7 +54,7 @@ Pages.home = {
       return;
     }
     if (!d || d.round.id !== S.roundId) {
-      el.innerHTML = pageHead('home', hi + ' คุณ' + first, 'กำลังโหลดข้อมูลรอบ…') + '<div class="grid g4">' + [1, 2, 3, 4].map(function () { return '<div class="card"><div class="sk" style="height:16px;width:50%"></div><div class="sk mt8" style="height:34px"></div></div>'; }).join('') + '</div>';
+      el.innerHTML = pageHead('home', hi + ' คุณ' + first, S.roundErr ? 'โหลดข้อมูลรอบไม่สำเร็จ' : 'กำลังโหลดข้อมูลรอบ…') + (S.roundErr ? roundWait() : '<div class="grid g4">' + [1, 2, 3, 4].map(function () { return '<div class="card"><div class="sk" style="height:16px;width:50%"></div><div class="sk mt8" style="height:34px"></div></div>'; }).join('') + '</div>');
       return;
     }
     var docs = Logic.liveDocs(d), gate = Logic.gate(d), cl = gate.checklist, sum = Logic.catSummary(d), st = R.roundStats(docs, d.estimates, S.items);

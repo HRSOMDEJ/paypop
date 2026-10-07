@@ -520,3 +520,4 @@ html.side-mini .side .round-pick .nm-s { display: grid; justify-items: center; g
 html.side-mini .side .round-pick .nm-s .i { width: 18px; height: 18px; color: var(--pri); }
 html.side-mini .side .round-pick .nm-s .dot { position: absolute; top: -2px; right: 6px; width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
 html.side-mini .nav a .badge { top: -3px; right: -1px; min-width: 16px; height: 16px; font-size: .58rem; padding: 0 3px; box-shadow: 0 0 0 2px var(--surface); }
+.nowrap { white-space: nowrap; }

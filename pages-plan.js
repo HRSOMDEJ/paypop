@@ -7,7 +7,7 @@ Pages.plan = {
     var P = Pages.plan, d = S.data;
     el.innerHTML = pageHead('plan', 'ประมาณการเงินที่ยังไม่คีย์', 'ประมาณยอดไว้ก่อนส่งยอดเตรียมเงิน · เมื่อเอกสารจริงเข้ามา ให้กด "ตัดยอด" เอง');
     if (!S.roundId) { el.innerHTML += noRound(); return; }
-    if (!d) { el.innerHTML += '<div class="card"><div class="sk" style="height:300px"></div></div>'; return; }
+    if (!d) { el.innerHTML += roundWait(); return; }
     var open = d.round.status === 'OPEN';
     if (!P.rows || P.round !== d.round.id || !S.dirty) { P.rows = (d.estimates || []).map(function (e) { return Object.assign({}, e); }); P.round = d.round.id; }
     if (P.addFrom && open) { P.rows.push(Object.assign({ id: '', amount: 0, cut: 0, note: '' }, P.addFrom)); P.addFrom = null; S.dirty = 'plan'; toast('เพิ่มรายการประมาณการแล้ว กรอกยอดแล้วกดบันทึก', 'ok'); }
@@ -88,7 +88,7 @@ Pages.close = {
     var P = Pages.close, d = S.data;
     el.innerHTML = pageHead('close', 'ปิดรอบ', 'ตรวจเรื่องค้าง → วางข้อมูล HRMi ชุดสุดท้ายเพื่อเทียบยอด → ปิดรอบ (ล็อกข้อมูล + เก็บลงคลัง)');
     if (!S.roundId) { el.innerHTML += noRound(); return; }
-    if (!d) { el.innerHTML += '<div class="card"><div class="sk" style="height:300px"></div></div>'; return; }
+    if (!d) { el.innerHTML += roundWait(); return; }
     if (P.round !== d.round.id) { P.batches = []; P.round = d.round.id; P.compared = false; }
     if (d.round.status !== 'OPEN') {
       el.innerHTML += '<div class="card empty">' + mascot(120, 'happy') + '<h3>' + esc(d.round.name) + ' ปิดรอบแล้ว</h3><p>ปิดเมื่อ ' + thDateTime(d.round.closedAt) + ' โดย ' + esc(userName(d.round.closedBy)) + (d.round.closeNote ? '<br>หมายเหตุ: ' + esc(d.round.closeNote) : '') + '</p><div class="row"><a class="btn" href="#/report">' + icon('dl') + 'ดูรายงาน</a><a class="btn" href="#/rounds">' + icon('unlock') + 'เปิดรอบอีกครั้ง</a></div></div>';
@@ -155,7 +155,7 @@ Pages.report = {
     var P = Pages.report, d = S.data;
     el.innerHTML = pageHead('report', 'รายงาน & Export', 'สรุปยอดเตรียมเงินภาพรวมและรายละเอียดรายหมวด · เลือกหมวดที่จะส่งออกได้');
     if (!S.roundId) { el.innerHTML += noRound(); return; }
-    if (!d) { el.innerHTML += '<div class="card"><div class="sk" style="height:300px"></div></div>'; return; }
+    if (!d) { el.innerHTML += roundWait(); return; }
     var cats = activeCats().concat(Logic.catSummary(d).some(function (r) { return r.cat.code === ''; }) ? [{ code: '', name: 'ยังไม่จัดหมวด', color: '#94a3b8' }] : []);
     if (!P.sel || P.round !== d.round.id) { P.sel = {}; cats.forEach(function (c) { P.sel[c.code] = true; }); P.round = d.round.id; }
     P.opt = P.opt || { detail: true, estimates: true, checklist: true };

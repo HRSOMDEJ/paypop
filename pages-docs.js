@@ -12,7 +12,7 @@ Pages.docs = {
     var P = Pages.docs, d = S.data, par = qs(hash);
     el.innerHTML = pageHead('docs', 'เอกสารรอบนี้', 'ติดตามสถานะรายเอกสาร ย้ายหมวด แก้ฝ่าย และคัดลอกชื่อไฟล์ Scan', '<button class="btn" id="dxExport">' + icon('dl') + 'Excel ตามตัวกรอง</button>');
     if (!S.roundId) { el.innerHTML += noRound(); return; }
-    if (!d) { el.innerHTML += '<div class="card"><div class="sk" style="height:300px"></div></div>'; return; }
+    if (!d) { el.innerHTML += roundWait(); return; }
     if (P.round !== d.round.id) { P.pend = {}; P.sel = {}; P.round = d.round.id; }
     P.f = P.f || {};
     if (par.cat != null) P.f.cat = par.cat; if (par.st != null) P.f.st = par.st; if (par.q != null) P.f.q = par.q;
@@ -187,7 +187,7 @@ Pages.checklist = {
     var P = Pages.checklist, d = S.data, par = qs(hash);
     el.innerHTML = pageHead('checklist', 'เช็กลิสต์ความครบ', 'ทุกรายการรายได้ที่ควรมีในแต่ละหมวด · มาแล้ว / ยังไม่มา / ไม่มีเบิก · พร้อมเทียบค่าเฉลี่ยย้อนหลัง');
     if (!S.roundId) { el.innerHTML += noRound(); return; }
-    if (!d) { el.innerHTML += '<div class="card"><div class="sk" style="height:300px"></div></div>'; return; }
+    if (!d) { el.innerHTML += roundWait(); return; }
     if (P.round !== d.round.id) { P.pend = {}; P.round = d.round.id; }
     if (par.f) P.f = par.f; P.f = P.f || 'MAIN'; P.cat = par.cat != null ? par.cat : (P.cat || '');
     var cl = Logic.checklist(d), open = d.round.status === 'OPEN', lim = S.boot.settings.ANOMALY_PCT || 30, nAvg = (d.stats && d.stats.n) || 0;

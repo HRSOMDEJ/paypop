@@ -2,7 +2,7 @@
  * core.js — แกนหน้าเว็บ PayPop: เครือข่าย แคช ล็อกอิน เมนู ชิ้นส่วน UI (toast/modal/drawer/popover/tooltip/confetti) และตัวนำทาง
  * หลักการความเร็ว: แสดงข้อมูลที่จำไว้ในเครื่องทันที → ถามหลังบ้านเฉพาะส่วนที่เปลี่ยน (rev/dv) · บันทึกครั้งเดียวต่อหน้า
  */
-var APP_BUILD = '2569-10-06.3', APP_BUILD_TH = '6 ต.ค. 2569';
+var APP_BUILD = '2569-10-07.1', APP_BUILD_TH = '7 ต.ค. 2569';
 var S = { codes: {}, token: null, boot: null, roundId: null, data: null, items: {}, itemsList: [], cats: {}, page: null, busy: 0, dirty: null };
 
 /* ================================================================ utils */
@@ -87,48 +87,94 @@ function mascot(size, mood) {
     '<path d="M86 30l3-6M90 38l6-2M82 22l1-6" stroke="#ff4f7b" stroke-width="3" stroke-linecap="round"/></g></svg></span>';
 }
 
-/* ================================================================ network */
-var NET = { active: 0, queue: [], MAX: 4 };
+/* ================================================================ network
+ * Apps Script บางช่วง Google ให้รอคิว 10–30 วิ หรือตอบหน้า error (ไม่มี CORS header → "Failed to fetch")
+ * - จำกัดพร้อมกัน 2 คำขอ · คำขออ่านที่ซ้ำกันขณะรอ ใช้คำตอบเดียวกัน
+ * - ทุกคำขอมีเวลาหมด (อ่าน 75 วิ · งานใหญ่ 330 วิ) ไม่ค้างตลอดไป
+ * - อ่าน: ลองใหม่ 3 ครั้ง (2/5/10 วิ) · เขียน: ลองใหม่ 3 ครั้งด้วยรหัสคำขอ (rid) เดิม หลังบ้านจำผลไว้ จึงไม่บันทึกซ้ำ
+ * - เก็บเวลา 30 คำขอล่าสุด (รวม/หลังบ้าน) ดูได้ที่ ตั้งค่า › เกี่ยวกับ */
+var NET = { active: 0, queue: [], MAX: 2, inflight: {}, log: [], slow: 0 };
+var NET_LONG = /^(historyRound|historyInit|commitImport|previewImport|closeRound|reopenRound|deleteRound|resetSystem|saveIncomeCodes)$/;
 function netSlot() { return new Promise(function (res) { if (NET.active < NET.MAX) { NET.active++; res(); } else NET.queue.push(res); }); }
 function netDone() { var n = NET.queue.shift(); if (n) n(); else NET.active = Math.max(0, NET.active - 1); }
-function isRead(a) { return /^(get|list|bootstrap|ping|login|smcLookup)/.test(a); }
-function fetchOnce(action, payload) {
-  return fetch(API_URL, { method: 'POST', redirect: 'follow', credentials: 'omit', cache: 'no-store', body: JSON.stringify({ action: action, token: S.token, payload: payload || {} }) })
+function isRead(a) { return /^(get|list|bootstrap|ping|login|smcLookup|historyStatus)/.test(a); }
+function newRid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 10); }
+function netLog(action, ms, srv, ok, note) {
+  NET.log.unshift({ at: Date.now(), action: action, ms: ms, srv: srv == null ? null : srv, ok: ok, note: note || '' });
+  if (NET.log.length > 30) NET.log.length = 30;
+}
+function netSlow(d) { NET.slow = Math.max(0, NET.slow + d); syncState(S.busy ? 'busy' : 'ok'); }
+function fetchOnce(action, payload, rid) {
+  var t0 = Date.now(), ctl = typeof AbortController !== 'undefined' ? new AbortController() : null, timedOut = false, slowOn = false;
+  var limit = NET_LONG.test(action) ? 330000 : 75000;
+  var to = setTimeout(function () { timedOut = true; if (ctl) ctl.abort(); }, limit);
+  var sl = setTimeout(function () { slowOn = true; netSlow(1); }, 8000);
+  var body = { action: action, token: S.token, payload: payload || {} };
+  if (rid) body.rid = rid;
+  var stop = function () { clearTimeout(to); clearTimeout(sl); if (slowOn) netSlow(-1); };
+  return fetch(API_URL, { method: 'POST', redirect: 'follow', credentials: 'omit', cache: 'no-store', body: JSON.stringify(body), signal: ctl ? ctl.signal : undefined })
     .then(function (r) { return r.text(); })
     .then(function (t) {
-      if (String(t).trim().charAt(0) === '<') { var e = new Error('เซิร์ฟเวอร์ Google ไม่ว่างชั่วคราว กรุณาลองอีกครั้ง'); e.busy = true; throw e; }
-      return JSON.parse(t);
+      stop();
+      if (String(t).trim().charAt(0) !== '{') { netLog(action, Date.now() - t0, null, false, 'Google ตอบหน้า error'); var e = new Error('Google ไม่ว่างชั่วคราว'); e.busy = true; throw e; }
+      var res = JSON.parse(t);
+      netLog(action, Date.now() - t0, res.ms, res.ok !== false, res.ok === false ? (res.code || '') : '');
+      return res;
+    }, function (e) {
+      stop();
+      var x = new Error(timedOut ? 'Google ไม่ตอบภายใน ' + Math.round(limit / 1000) + ' วิ' : 'Google ไม่ตอบ/ตัดการเชื่อมต่อ (' + (e && e.message ? e.message : e) + ')');
+      x.busy = true; x.net = true;
+      netLog(action, Date.now() - t0, null, false, timedOut ? 'หมดเวลา' : 'เชื่อมต่อไม่ได้');
+      throw x;
     });
+}
+/** ตารางเวลาคำขอล่าสุด: รวม = ที่ผู้ใช้รอจริง · หลังบ้าน = สคริปต์ทำงาน · ส่วนต่าง = รอคิว/เครือข่ายของ Google */
+function netReport() {
+  var rows = NET.log.map(function (x) {
+    var wait = x.srv != null ? Math.max(0, x.ms - x.srv) : null;
+    return '<tr><td class="small">' + new Date(x.at).toLocaleTimeString('th-TH') + '</td><td class="mono small">' + esc(x.action) + '</td><td class="n">' + (x.ms / 1000).toFixed(1) + '</td><td class="n">' + (x.srv != null ? (x.srv / 1000).toFixed(1) : '—') + '</td><td class="n">' + (wait != null ? (wait / 1000).toFixed(1) : '—') + '</td><td>' + (x.ok ? '<span class="pill st-APPROVED">สำเร็จ</span>' : '<span class="pill st-RETURN">' + esc(x.note || 'ไม่สำเร็จ') + '</span>') + '</td></tr>';
+  }).join('');
+  return '<div class="card mt12"><div class="card-h"><h3>' + icon('pulse') + 'ความเร็วการเชื่อมต่อ (30 คำขอล่าสุดในหน้านี้)</h3>' + q('รวม = เวลาที่รอจริง · หลังบ้าน = เวลาที่สคริปต์ทำงาน · ส่วนต่าง = รอคิว/เครือข่ายของ Google ถ้าส่วนต่างสูง (10–30 วิ) แปลว่า Google ช้าเอง ไม่ใช่ข้อมูลเยอะ') + '</div>' +
+    (rows ? '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>เวลา</th><th>คำสั่ง</th><th class="n">รวม (วิ)</th><th class="n">หลังบ้าน</th><th class="n">รอคิว</th><th>ผล</th></tr></thead><tbody>' + rows + '</tbody></table></div>' : '<p class="small muted" style="margin:0">ยังไม่มีคำขอ</p>') + '</div>';
 }
 function api(action, payload, opt) {
   opt = opt || {};
-  var waits = [700, 1600, 3200], tries = 0, read = isRead(action);
+  var read = isRead(action), key = read ? action + '|' + JSON.stringify(payload || {}) : null;
+  if (key && NET.inflight[key]) return NET.inflight[key];
+  var waits = read ? [2000, 5000, 10000] : [3000, 8000, 15000], tries = 0, rid = read ? null : newRid();
   busy(1);
   var attempt = function () {
-    return netSlot().then(function () { return fetchOnce(action, payload); }).then(function (x) { netDone(); return x; }, function (e) {
+    return netSlot().then(function () { return fetchOnce(action, payload, rid); }).then(function (x) {
       netDone();
-      if (read && tries < waits.length) { var w = waits[tries++]; return new Promise(function (r) { setTimeout(r, w); }).then(attempt); }
-      if (!e.busy) e.message = 'เชื่อมต่อระบบไม่ได้ กรุณาตรวจอินเทอร์เน็ตแล้วลองใหม่ (' + e.message + ')';
+      if (x && x.ok === false && x.code === 'BUSY' && tries < waits.length) { var w0 = waits[tries++]; return new Promise(function (r) { setTimeout(r, w0); }).then(attempt); }
+      return x;
+    }, function (e) {
+      netDone();
+      if (e.busy && tries < waits.length && opt.retry !== false) { var w = waits[tries++]; syncState('retry', tries); return new Promise(function (r) { setTimeout(r, w); }).then(attempt); }
+      e.message = (read ? 'โหลดข้อมูลไม่สำเร็จ: ' : 'บันทึกไม่สำเร็จ: ') + e.message + ' — ลองใหม่อีกครั้งในอีกสักครู่' + (read ? '' : ' (ถ้าไม่แน่ใจว่าบันทึกแล้วหรือยัง กดซิงก์ข้อมูลใหม่ก่อน)');
       throw e;
     });
   };
-  return attempt().then(function (res) {
-    busy(-1);
+  var p = attempt().then(function (res) {
+    busy(-1); if (key) delete NET.inflight[key];
     if (res.ok) { if (res.dv && S.boot && !opt.keepDv) S.boot.dv = res.dv; return res.data; }
     var err = new Error(res.error || 'เกิดข้อผิดพลาด'); err.code = res.code;
     if (res.code === 'UNAUTHORIZED') { App.logout(true); toast('หมดเวลาการใช้งาน กรุณาเข้าสู่ระบบอีกครั้ง', 'warn'); }
     throw err;
-  }, function (e) { busy(-1); syncState('err'); throw e; });
+  }, function (e) { busy(-1); if (key) delete NET.inflight[key]; syncState('err'); throw e; });
+  if (key) NET.inflight[key] = p;
+  return p;
 }
 function busy(d) {
   S.busy = Math.max(0, S.busy + d);
   var p = $('.topprog'); if (p) { if (S.busy) { p.classList.add('on'); p.style.width = (30 + Math.random() * 50) + '%'; } else { p.style.width = '100%'; setTimeout(function () { if (!S.busy) { p.classList.remove('on'); p.style.width = '0'; } }, 350); } }
   syncState(S.busy ? 'busy' : 'ok');
 }
-function syncState(st) {
+function syncState(st, n) {
   var el = $('#sync'); if (!el) return;
-  el.className = 'sync ' + (st === 'busy' ? 'busy' : st === 'err' ? 'err' : '');
-  el.innerHTML = '<span class="dot"></span>' + (st === 'busy' ? 'กำลังซิงก์…' : st === 'err' ? 'เชื่อมต่อไม่ได้' : 'ข้อมูลล่าสุด');
+  if (st === 'busy' && NET.slow) st = 'slow';
+  el.className = 'sync ' + (st === 'busy' || st === 'slow' || st === 'retry' ? 'busy' : st === 'err' ? 'err' : '');
+  el.innerHTML = '<span class="dot"></span>' + (st === 'busy' ? 'กำลังซิงก์…' : st === 'slow' ? 'Google ตอบช้า กำลังรอ…' : st === 'retry' ? 'Google ไม่ว่าง ลองใหม่ครั้งที่ ' + n + '…' : st === 'err' ? 'เชื่อมต่อไม่ได้ (ใช้ข้อมูลในเครื่อง)' : 'ข้อมูลล่าสุด');
 }
 function keyFor(k) { return 'pp:' + (S.boot && S.boot.me ? S.boot.me.empCode : 'x') + ':' + k; }
 
@@ -313,6 +359,11 @@ function loadRound(id, onData, force) {
     applyRound(d); onData && onData(d, false); return d;
   });
 }
+/** กล่องรอข้อมูลรอบ: โครงโหลด หรือ (ถ้าโหลดไม่สำเร็จ) ข้อความ + ปุ่มลองใหม่ — ไม่ค้างโครงโหลดตลอดไป */
+function roundWait() {
+  if (!S.roundErr) return '<div class="card"><div class="sk" style="height:300px"></div><p class="small muted mt8" style="text-align:center">กำลังโหลดข้อมูลรอบ… ถ้า Google ตอบช้าอาจใช้เวลา 10–30 วินาที</p></div>';
+  return '<div class="card empty">' + mascot(90, 'sleep') + '<h3>โหลดข้อมูลรอบไม่สำเร็จ</h3><p class="small muted">' + esc(S.roundErr) + '</p><button class="btn pri" onclick="App.reloadRound()">' + icon('refresh') + 'ลองอีกครั้ง</button></div>';
+}
 function applyRound(d) {
   if (!d || !d.round) return;
   S.data = d; lsSet(keyFor('round:' + d.round.id), d);
@@ -468,22 +519,36 @@ function renderLogin(msg) {
     '<p class="tiny muted" style="margin:0">PayPop v1.2569 · build ' + APP_BUILD + ' · ' + APP_BUILD_TH + '</p></form></section></div>';
   var lc = lsGet('pp:lastCode'); if (lc) $('#lg-code').value = lc;
   setTimeout(function () { ($('#lg-code').value ? $('#lg-pw') : $('#lg-code')).focus(); }, 50);
-  fetchOnce('ping', {}).then(function (r) {
-    var ok = r.ok && r.data.installed;
-    $('#conn').innerHTML = ok ? '<span class="sync" style="padding:2px 8px"><span class="dot"></span>เชื่อมต่อระบบแล้ว · หลังบ้าน build ' + esc(r.data.build) + '</span>' : '<span class="sync err" style="padding:2px 8px"><span class="dot"></span>' + (r.ok ? 'หลังบ้านยังไม่ได้ติดตั้ง (Run setupSystem)' : 'เชื่อมต่อไม่ได้') + '</span>';
-  }, function () { $('#conn').innerHTML = '<span class="sync err" style="padding:2px 8px"><span class="dot"></span>เชื่อมต่อหลังบ้านไม่ได้ ตรวจ config.js</span>'; });
+  var connMsg = function (cls, txt) { var c = $('#conn'); if (c) c.innerHTML = '<span class="sync ' + cls + '" style="padding:2px 8px"><span class="dot"></span>' + txt + '</span>'; };
+  var pingTry = 0, ping = function () {
+    fetchOnce('ping', {}).then(function (r) {
+      var ok = r.ok && r.data.installed;
+      connMsg(ok ? '' : 'err', ok ? 'เชื่อมต่อระบบแล้ว · หลังบ้าน build ' + esc(r.data.build) : (r.ok ? 'หลังบ้านยังไม่ได้ติดตั้ง (Run setupSystem)' : 'เชื่อมต่อไม่ได้'));
+    }, function () {
+      pingTry++;
+      if (pingTry < 4) { connMsg('busy', 'Google ตอบช้า กำลังลองใหม่ (' + pingTry + '/3)…'); setTimeout(ping, pingTry * 3000); }
+      else connMsg('err', 'Google ไม่ว่างชั่วคราว (ไม่ใช่ปัญหา config.js) — เข้าสู่ระบบได้ตามปกติ ระบบจะลองใหม่ให้เอง');
+    });
+  };
+  ping();
   $('#loginForm').onsubmit = function (e) {
     e.preventDefault();
-    var code = $('#lg-code').value.trim(), pw = $('#lg-pw').value, b = $('#lgBtn');
+    var code = $('#lg-code').value.trim(), pw = $('#lg-pw').value, b = $('#lgBtn'), n = 0;
     b.classList.add('loading');
-    fetchOnce('login', { empCode: code, password: pw, withBoot: true, dv: '' }).then(function (r) {
-      b.classList.remove('loading');
-      if (!r.ok) { toast(r.error, 'bad'); return; }
-      lsSet('pp:lastCode', code);
-      S.token = r.data.token; lsSet('pp:token', S.token);
-      if (r.data.mustChange) return forcePassword(code, r.data.fullName);
-      setBoot(r.data.boot); App.enter();
-    }, function (e) { b.classList.remove('loading'); fail(e); });
+    var go = function () {
+      fetchOnce('login', { empCode: code, password: pw, withBoot: true, dv: '' }).then(function (r) {
+        b.classList.remove('loading');
+        if (!r.ok) { toast(r.error, 'bad'); return; }
+        lsSet('pp:lastCode', code);
+        S.token = r.data.token; lsSet('pp:token', S.token);
+        if (r.data.mustChange) return forcePassword(code, r.data.fullName);
+        setBoot(r.data.boot); App.enter();
+      }, function (e) {
+        if (n < 3) { n++; connMsg('busy', 'Google ตอบช้า กำลังลองเข้าสู่ระบบใหม่ (' + n + '/3)…'); setTimeout(go, n * 3000); return; }
+        b.classList.remove('loading'); connMsg('err', 'Google ไม่ว่างชั่วคราว กรุณารอ 1–2 นาทีแล้วกดเข้าสู่ระบบอีกครั้ง'); fail(e);
+      });
+    };
+    go();
   };
 }
 function forcePassword(code, name) {
@@ -534,12 +599,24 @@ var App = {
     S.roundId = pickDefaultRound();
     if (!location.hash || location.hash === '#/' || location.hash === '#') history.replaceState(null, '', '#/home');
     route();
-    if (S.roundId) loadRound(S.roundId, function (d, fromCache) { if (!fromCache) { updateBadges(); refreshPage(); } else updateBadges(); }).catch(fail);
-    setTimeout(App.prefetch, 3000);
+    if (S.roundId) App.reloadRound(true);
+    setTimeout(App.prefetch, 20000);
+  },
+  /** โหลดข้อมูลรอบปัจจุบัน · ไม่สำเร็จ = แสดงปุ่มลองใหม่ และลองเองอีก 2 ครั้ง (20/60 วิ) */
+  reloadRound: function (first, n) {
+    var id = S.roundId; if (!id) return;
+    n = n || 0; S.roundErr = null; if (!first && !S.data) refreshPage();
+    loadRound(id, function (d, fromCache) { updateBadges(); if (!fromCache || !first) refreshPage(); }).then(function () { S.roundErr = null; }, function (e) {
+      if (S.roundId !== id) return;
+      if (S.data && S.data.round.id === id) { toast('ใช้ข้อมูลที่จำไว้ในเครื่อง (' + e.message + ')', 'warn', 5000); return; }
+      S.roundErr = e.message; refreshPage();
+      if (n < 2) setTimeout(function () { if (S.roundId === id && !S.data) App.reloadRound(false, n + 1); }, n ? 60000 : 20000);
+    });
   },
   /** โหลดข้อมูลหน้าที่เปิดบ่อยเก็บไว้ในเครื่องล่วงหน้า (หลังหน้าแรกขึ้นแล้ว ทีละคำขอ ไม่แย่งหน้าที่ใช้อยู่) */
   prefetch: function () {
     if (!S.token || S.bulk) return;
+    if (NET.log.slice(0, 5).some(function (x) { return !x.ok || x.ms > 15000; })) return;   // Google กำลังช้า → ไม่โหลดล่วงหน้า
     var rid = S.roundId, jobs = [];
     if (rid && S.page !== 'deduct') jobs.push(function () { return api('getDeductions', { roundId: rid }).then(function (r) { lsSet(keyFor('ded:' + rid), r); }); });
     if (S.page !== 'wl') jobs.push(function () { return api('getWl', {}).then(function (r) { lsSet(keyFor('wl'), r.rows); }); });
@@ -547,9 +624,9 @@ var App = {
   },
   selectRound: function (id) {
     if (S.dirty) return toast('กรุณาบันทึกหรือยกเลิกการแก้ไขในหน้านี้ก่อนเปลี่ยนรอบ', 'warn');
-    S.roundId = id; lsSet(keyFor('round'), id); S.data = null; updateRoundPick();
+    S.roundId = id; lsSet(keyFor('round'), id); S.data = null; S.roundErr = null; updateRoundPick();
     refreshPage();
-    loadRound(id, function (d, fromCache) { updateBadges(); refreshPage(); }).catch(fail);
+    App.reloadRound(false);
   },
   resync: function () {
     try { Object.keys(localStorage).forEach(function (k) { if (k.indexOf(keyFor('')) === 0) localStorage.removeItem(k); }); } catch (e) { }

@@ -162,13 +162,13 @@ Pages.settings = {
   tab_smc: function (box) {
     var list = (S.boot.smcGroups || []).map(function (g) { return Object.assign({}, g); });
     var draw = function () {
-      box.innerHTML = '<div class="card"><div class="card-h"><h2>' + icon('steth') + 'กลุ่มแพทย์ SMC</h2>' + q('ระบบเลือกเอกสาร 80%/20% ให้อัตโนมัติจาก "คำในชื่อรายได้" (ชื่อรายได้มีคำนี้อยู่ = ใช่)') + '<span class="grow"></span><button class="btn sm" id="sgAdd">' + icon('plus') + 'เพิ่มกลุ่ม</button></div>' +
-        '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>รหัส</th><th>ชื่อกลุ่ม</th><th>คำในชื่อรายได้ ส่วน 80%</th><th>คำในชื่อรายได้ ส่วน 20%</th><th></th></tr></thead><tbody>' +
-        list.map(function (g, i) { return '<tr><td><input class="inp sm" style="width:80px" data-i="' + i + '" data-k="id" value="' + esc(g.id) + '"></td><td><input class="inp sm" data-i="' + i + '" data-k="name" value="' + esc(g.name) + '"></td><td style="min-width:260px"><input class="inp sm" data-i="' + i + '" data-k="kw80" value="' + esc(g.kw80) + '"></td><td style="min-width:260px"><input class="inp sm" data-i="' + i + '" data-k="kw20" value="' + esc(g.kw20) + '"></td><td><button class="btn xs ghost" data-del="' + i + '">' + icon('trash') + '</button></td></tr>'; }).join('') +
+      box.innerHTML = '<div class="card"><div class="card-h"><h2>' + icon('steth') + 'กลุ่มแพทย์ SMC</h2>' + q('ระบบจับคู่เอกสาร 80%/20% ในหน้าตรวจแพทย์ จาก "คำในชื่อรายได้" และแยกกลุ่มที่ชื่อเหมือนกัน (เช่น แพทย์ทั่วไป/แพทย์รังสี) ด้วย "คำในรายละเอียด" · หลายคำคั่นด้วย |') + '<span class="grow"></span><button class="btn sm" id="sgAdd">' + icon('plus') + 'เพิ่มกลุ่ม</button></div>' +
+        '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>รหัส</th><th>ชื่อกลุ่ม</th><th>คำในชื่อรายได้ ส่วน 80%</th><th>คำในชื่อรายได้ ส่วน 20%</th><th>รายละเอียดต้องมี</th><th>รายละเอียดต้องไม่มี</th><th></th></tr></thead><tbody>' +
+        list.map(function (g, i) { return '<tr><td><input class="inp sm" style="width:80px" data-i="' + i + '" data-k="id" value="' + esc(g.id) + '"></td><td><input class="inp sm" data-i="' + i + '" data-k="name" value="' + esc(g.name) + '"></td><td style="min-width:260px"><input class="inp sm" data-i="' + i + '" data-k="kw80" value="' + esc(g.kw80) + '"></td><td style="min-width:260px"><input class="inp sm" data-i="' + i + '" data-k="kw20" value="' + esc(g.kw20) + '"></td><td style="min-width:110px"><input class="inp sm" data-i="' + i + '" data-k="inc" value="' + esc(g.inc || '') + '" placeholder="เช่น รังสี"></td><td style="min-width:110px"><input class="inp sm" data-i="' + i + '" data-k="exc" value="' + esc(g.exc || '') + '" placeholder="เช่น รังสี|ตกเบิก"></td><td><button class="btn xs ghost" data-del="' + i + '">' + icon('trash') + '</button></td></tr>'; }).join('') +
         '</tbody></table></div><div class="row end mt12"><button class="btn pri" id="sgSave">' + icon('ok') + 'บันทึก</button></div></div>';
       $$('[data-k]', box).forEach(function (inp) { inp.onchange = function () { list[+inp.getAttribute('data-i')][inp.getAttribute('data-k')] = inp.value; }; });
       $$('[data-del]', box).forEach(function (b) { b.onclick = function () { list.splice(+b.getAttribute('data-del'), 1); draw(); }; });
-      $('#sgAdd').onclick = function () { list.push({ id: 'G' + (list.length + 1), name: '', kw80: '', kw20: '' }); draw(); };
+      $('#sgAdd').onclick = function () { list.push({ v: 2, id: 'G' + (list.length + 1), name: '', kw80: '', kw20: '', inc: '', exc: '' }); draw(); };
       $('#sgSave').onclick = function () { var b = this; b.classList.add('loading'); api('saveSettings', { values: { SMC_GROUPS: JSON.stringify(list) } }).then(function (res) { S.boot.settings = res.settings; S.boot.smcGroups = res.smcGroups; setBoot(S.boot); toast('บันทึกกลุ่มแพทย์แล้ว', 'ok'); b.classList.remove('loading'); }, function (e) { b.classList.remove('loading'); fail(e); }); };
     };
     draw();
@@ -187,6 +187,7 @@ Pages.settings = {
       '<p class="small" style="margin:0">ล้างรอบทั้งหมด (รวมรอบที่เปิดอยู่) เอกสาร ประมาณการ เช็กลิสต์ SMC เงินหัก รายการรายได้ สถิติ และไฟล์คลังบน Drive · หมวดกลับเป็นค่าตั้งต้น<br><b>คงไว้:</b> ผู้ใช้/รหัสผ่าน ค่าระบบ และประวัติการใช้งาน</p>' +
       '<div class="row mt12"><button class="btn danger sm" id="rsGo">' + icon('trash') + 'เริ่มข้อมูลใหม่ทั้งหมด…</button></div></div></div></div>';
     var showHave = function () {
+      if (!$('#hsHave')) return;
       var ids = Object.keys(st || {}), hs = ids.filter(function (k) { return st[k].source === 'HISTORY'; });
       $('#hsHave').innerHTML = '<p class="small muted" style="margin:0">' + ids.length + ' รอบ · ย้อนหลัง ' + hs.length + ' รอบ' + (hs.length ? ' (' + esc(R.ymLabel(hs.sort()[0])) + ' – ' + esc(R.ymLabel(hs[hs.length - 1])) + ')' : '') + '</p>';
     };
@@ -345,6 +346,7 @@ Pages.settings = {
     box.innerHTML = '<div class="card"><div class="row mb12"><div class="search grow">' + icon('search') + '<input id="auQ" class="inp" placeholder="ค้นหา รหัส การกระทำ รอบ…"></div></div><div id="auT"><div class="sk" style="height:200px"></div></div></div>';
     var load = function (q2) {
       api('getAudit', { q: q2 || '' }).then(function (rows) {
+        if (!$('#auT')) return;
         var A = { LOGIN: 'เข้าสู่ระบบ', LOGOUT: 'ออกจากระบบ', IMPORT: 'นำเข้า', UPDATE: 'แก้ไข', CREATE: 'สร้าง', DELETE: 'ลบ', CLOSE: 'ปิดรอบ', REOPEN: 'เปิดรอบอีกครั้ง', SAVE: 'บันทึก' };
         $('#auT').innerHTML = '<div class="tbl-wrap tall"><table class="tbl"><thead><tr><th>เวลา</th><th>ผู้ใช้</th><th>การกระทำ</th><th>ส่วน</th><th>เป้าหมาย</th><th class="hide-sm">รายละเอียด</th></tr></thead><tbody>' +
           rows.map(function (r) { return '<tr><td class="nowrap small">' + thDateTime(r.at) + '</td><td class="small">' + esc(userName(r.empCode)) + '</td><td>' + (r.result !== 'SUCCESS' ? '<span class="pill st-RETURN">' + esc(A[r.action] || r.action) + '</span>' : esc(A[r.action] || r.action)) + '</td><td class="small">' + esc(r.module) + '</td><td class="small">' + esc(r.target) + '</td><td class="hide-sm t2 wrap-any" style="max-width:320px">' + esc(r.detail) + '</td></tr>'; }).join('') + '</tbody></table></div>';
@@ -361,7 +363,7 @@ Pages.settings = {
       box.innerHTML = '<div class="grid g2"><div class="card"><div class="row">' + mascot(96) + '<div class="flex1"><h2>PayPop <span class="muted small">v' + esc(i.version) + '</span></h2><p class="muted" style="margin:4px 0">ระบบสรุปบันทึกการจ่าย งานเงินเดือน ฝ่ายทรัพยากรบุคคล</p></div></div>' +
         '<dl class="kv mt12"><dt>หน้าเว็บ build</dt><dd>' + esc(APP_BUILD) + '</dd><dt>หลังบ้าน build</dt><dd>' + esc(i.build) + (i.build === APP_BUILD ? ' <span class="pill st-APPROVED">ตรงกัน</span>' : ' <span class="pill st-RETURN">ไม่ตรง</span>') + '</dd><dt>SmartAPI</dt><dd>' + (i.smartapi ? 'เชื่อมแล้ว' : 'ยังไม่ได้ตั้งค่า') + '</dd><dt>ฐานข้อมูล</dt><dd><a href="' + esc(i.dbUrl) + '" target="_blank" rel="noopener">เปิด Google Sheet</a></dd></dl></div>' +
         '<div class="card"><h3>' + icon('db') + 'ขนาดข้อมูล</h3><dl class="kv mt12"><dt>เอกสารในรอบที่เปิด</dt><dd>' + fmt0(i.counts.docsOpen) + '</dd><dt>ดัชนีเอกสารทั้งหมด</dt><dd>' + fmt0(i.counts.docIndex) + '</dd><dt>รายการรายได้</dt><dd>' + fmt0(i.counts.items) + '</dd><dt>รอบ</dt><dd>' + fmt0(i.counts.rounds) + '</dd><dt>ประวัติการเปลี่ยนแปลง</dt><dd>' + fmt0(i.counts.history) + '</dd></dl>' +
-        '<button class="btn mt12" onclick="App.resync()">' + icon('refresh') + 'ล้างข้อมูลที่จำในเครื่องแล้วซิงก์ใหม่</button></div></div>';
+        '<button class="btn mt12" onclick="App.resync()">' + icon('refresh') + 'ล้างข้อมูลที่จำในเครื่องแล้วซิงก์ใหม่</button></div></div>' + netReport();
     });
   }
 };

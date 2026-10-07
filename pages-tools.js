@@ -2,117 +2,257 @@
  * pages-tools.js — ตรวจแพทย์ SMC 80/20 · รายการเงินหัก · ตรวจ WL รายฝ่าย
  */
 Pages.smc = {
-  st: null,
+  st: null,   // null = หน้ารายการเอกสาร · {…} = กำลังตรวจ 1 คู่เอกสาร
+  /** จัดกลุ่มเอกสาร 80/20 ของรอบ (ชื่อรายได้มีคำ kw80/kw20 + รายละเอียดมี/ไม่มีคำ inc/exc) → คู่เอกสาร */
+  pairs: function (d) {
+    var groups = S.boot.smcGroups || [], docs = Logic.liveDocs(d).filter(function (x) { return /\d\s*0\s*%/.test(x.incomeName); });
+    var words = function (s) { return String(s || '').split('|').map(function (w) { return w.trim(); }).filter(Boolean); };
+    var hit = function (txt, list) { return list.some(function (w) { return txt.indexOf(w) >= 0; }); };
+    var cls = function (x) {
+      for (var i = 0; i < groups.length; i++) {
+        var g = groups[i], side = g.kw80 && x.incomeName.indexOf(g.kw80) >= 0 ? '80' : g.kw20 && x.incomeName.indexOf(g.kw20) >= 0 ? '20' : '';
+        if (!side) continue;
+        var rm = String(x.remark || ''), inc = words(g.inc), exc = words(g.exc);
+        if (inc.length && !hit(rm, inc)) continue;
+        if (exc.length && hit(rm, exc)) continue;
+        return { g: g, side: side };
+      }
+      return { g: { id: 'OTHER', name: 'อื่น ๆ (ยังไม่เข้ากลุ่ม)' }, side: /8\s*0\s*%/.test(x.incomeName) ? '80' : '20' };
+    };
+    var by = {}, order = [];
+    docs.forEach(function (x) {
+      var c = cls(x), k = c.g.id;
+      if (!by[k]) { by[k] = { g: c.g, d80: [], d20: [] }; order.push(k); }
+      by[k][c.side === '80' ? 'd80' : 'd20'].push(x);
+    });
+    var gi = function (id) { for (var i = 0; i < groups.length; i++) if (groups[i].id === id) return i; return 999; };
+    order.sort(function (a, b) { return gi(a) - gi(b); });
+    var out = [];
+    order.forEach(function (k) {
+      var b = by[k], ym = function (x) { return R.workYm(x.remark, x.jobName) || ''; }, used = {};
+      if (b.d80.length <= 1 && b.d20.length <= 1) { out.push({ g: b.g, d80: b.d80, d20: b.d20, ym: b.d80[0] ? ym(b.d80[0]) : b.d20[0] ? ym(b.d20[0]) : '' }); return; }
+      b.d80.forEach(function (a) {
+        var m = ym(a), mate = b.d20.filter(function (z) { return !used[z.docNo] && m && ym(z) === m; });
+        if (!mate.length && b.d20.length === 1 && b.d80.length === 1) mate = b.d20;
+        mate.slice(0, 1).forEach(function (z) { used[z.docNo] = 1; });
+        out.push({ g: b.g, d80: [a], d20: mate.slice(0, 1), ym: m });
+      });
+      b.d20.forEach(function (z) { if (!used[z.docNo]) out.push({ g: b.g, d80: [], d20: [z], ym: ym(z) }); });
+    });
+    // เอกสาร 80% ที่ยังไม่มีคู่ ↔ เอกสาร 20% ที่ยังไม่มีคู่ (เช่น 20% ที่รายละเอียดว่าง) → จับคู่ด้วยยอด 20% = 80% × 20/80 (คลาดได้ 1 บาท)
+    var rate = +S.boot.settings.RATE_80 || 80, l20 = out.filter(function (p) { return !p.d80.length && p.d20.length === 1; });
+    out.filter(function (p) { return p.d80.length === 1 && !p.d20.length; }).forEach(function (p) {
+      var want = p.d80[0].income * (100 - rate) / rate, m = l20.filter(function (z) { return !z.gone && Math.abs(z.d20[0].income - want) <= 1; })[0];
+      if (m) { p.d20 = m.d20; m.gone = true; }
+    });
+    out = out.filter(function (p) { return !p.gone; });
+    // ผูกชุดตรวจที่บันทึกไว้ (เลขที่เอกสาร 80% หรือ 20% ตรงกัน)
+    var saved = (d.smc || []).slice(), claim = {};
+    out.forEach(function (p) {
+      var nos = p.d80.concat(p.d20).map(function (x) { return x.docNo; });
+      p.batch = saved.filter(function (s) { return !claim[s.id] && String(s.docs80 + ',' + s.docs20).split(',').some(function (n) { return n && nos.indexOf(n) >= 0; }); })[0] || null;
+      if (p.batch) claim[p.batch.id] = 1;
+    });
+    saved.forEach(function (s) { if (!claim[s.id]) out.push({ g: { id: s.groupId, name: s.title || s.groupId }, d80: [], d20: [], ym: '', batch: s, orphan: true }); });
+    return out;
+  },
   render: function (el) {
-    var P = Pages.smc, d = S.data, groups = S.boot.smcGroups || [];
-    el.innerHTML = pageHead('smc', 'ตรวจแพทย์ SMC 80/20', 'วางรหัส จนท. + ยอด จากระบบ DF → ตรวจสถานะพนักงานผ่าน SmartAPI → แบ่ง 80/20 รายคน → เทียบกับยอดเอกสารใน HRMi');
+    var P = Pages.smc, d = S.data;
+    el.innerHTML = pageHead('smc', 'ตรวจแพทย์ SMC 80/20', 'ตรวจทีละเอกสาร: เลือกคู่เอกสาร 80%/20% → วางรหัส จนท. + ยอดเต็มจากระบบ DF → ตรวจสถานะพนักงาน (SmartAPI) → แบ่ง 80/20 → ยอดรวมต้องตรงเอกสาร');
     if (!S.roundId) { el.innerHTML += noRound(); return; }
-    if (!d) { el.innerHTML += '<div class="card"><div class="sk" style="height:300px"></div></div>'; return; }
-    if (!P.st || P.st.round !== d.round.id) P.st = { round: d.round.id, groupId: (groups[0] || {}).id, lines: [], staff: {}, docs80: null, docs20: null, title: '', workMonth: R.ymLabel(R.ymAdd(d.round.id, -1)), id: '' };
-    var st = P.st, open = d.round.status === 'OPEN';
-    el.innerHTML += lockedNote() + '<div class="grid g3"><div class="span2 grid" style="align-content:start"><div class="card"><div class="card-h"><h2>' + icon('steth') + 'ชุดตรวจ</h2>' + (st.id ? '<span class="pill st-PROC">กำลังแก้ชุดที่บันทึกไว้</span>' : '') + '</div>' +
-      '<div class="row"><div class="field grow"><label for="smG">กลุ่มแพทย์ ' + q('ตั้งชื่อเอกสาร 80%/20% ของแต่ละกลุ่มได้ที่ ตั้งค่า › แพทย์ SMC') + '</label><select id="smG" class="inp">' + groups.map(function (g) { return '<option value="' + esc(g.id) + '"' + (g.id === st.groupId ? ' selected' : '') + '>' + esc(g.name) + '</option>'; }).join('') + '</select></div>' +
+    if (!d) { el.innerHTML += roundWait(); return; }
+    if (P.st && P.st.round !== d.round.id) P.st = null;
+    if (P.st) return P.work(el);
+    P.list(el);
+  },
+
+  /* ---------------- หน้ารายการคู่เอกสาร */
+  list: function (el) {
+    var P = this, d = S.data, open = d.round.status === 'OPEN', pairs = P.pairs(d);
+    var done = pairs.filter(function (p) { return p.batch; }), ok = done.filter(function (p) { return p.batch.result === 'MATCH'; });
+    var people = done.reduce(function (s, p) { return s + (p.batch.lines || []).length; }, 0), flags = done.reduce(function (s, p) { return s + (+p.batch.flags || 0); }, 0);
+    var chips = function (list) {
+      return list.length ? list.map(function (x) { return '<div class="t1 mono" data-tip="' + esc(x.incomeName + (x.remark ? ' · ' + x.remark : '')) + '">' + esc(x.docNo.slice(-4)) + ' <span class="num">' + fmt(x.income) + '</span></div>'; }).join('') : '<span class="muted small">—</span>';
+    };
+    var res = function (p) {
+      var b = p.batch;
+      if (!b) return '<span class="pill st-WAIT">ยังไม่ตรวจ</span>';
+      var r = P.recheck(p);
+      return (r.ok ? '<span class="pill st-APPROVED">' + icon('ok') + 'ตรงกัน</span>' : '<span class="pill st-RETURN">' + icon('alert') + (r.why || 'ยอดไม่ตรง') + '</span>') +
+        '<div class="t2">' + (b.lines || []).length + ' คน · ' + fmt(b.total) + (+b.flags ? ' · <b style="color:var(--bad)">ติดธง ' + b.flags + '</b>' : '') + '</div>';
+    };
+    el.innerHTML += lockedNote() +
+      '<div class="grid g4 mb12">' +
+      '<div class="card kpi"><span class="ico t-vio">' + icon('docs') + '</span><div class="kpi-l">คู่เอกสาร 80/20 ในรอบ</div><div class="kpi-v num">' + pairs.filter(function (p) { return !p.orphan; }).length + '</div></div>' +
+      '<div class="card kpi"><span class="ico t-pri">' + icon('steth') + '</span><div class="kpi-l">ตรวจแล้ว</div><div class="kpi-v num">' + done.length + '</div><div class="kpi-s">ตรงกัน ' + ok.length + '</div></div>' +
+      '<div class="card kpi"><span class="ico t-ok">' + icon('users') + '</span><div class="kpi-l">แพทย์ที่ตรวจแล้ว</div><div class="kpi-v num">' + fmt0(people) + '</div><div class="kpi-s">คน (นับซ้ำได้ถ้าอยู่หลายเอกสาร)</div></div>' +
+      '<div class="card kpi"><span class="ico ' + (flags ? 't-bad' : 't-ok') + '">' + icon('flag') + '</span><div class="kpi-l">ติดธงพ้นสภาพ/ไม่พบ</div><div class="kpi-v num">' + flags + '</div></div></div>' +
+      '<div class="card"><div class="card-h"><h2>' + icon('docs') + 'เอกสาร 80% / 20% ของ' + esc(d.round.name) + '</h2>' + q('ระบบจับคู่จากชื่อรายได้ + รายละเอียด ตามกลุ่มที่ตั้งไว้ใน ตั้งค่า › กลุ่มแพทย์ SMC · กด "ตรวจ" ทีละแถว แต่ละแถวบันทึกแยกกัน ไม่ทับกัน') +
+      '<span class="grow"></span>' + (done.length ? '<button class="btn sm" id="smXall">' + icon('dl') + 'Excel ทั้งรอบ</button>' : '') + (open ? '<button class="btn sm" id="smFree">' + icon('plus') + 'ตรวจโดยเลือกเอกสารเอง</button>' : '') + '</div>' +
+      (pairs.length ? '<div class="tbl-wrap"><table class="tbl"><thead><tr><th>กลุ่ม</th><th>เดือนงาน</th><th>เอกสาร 80% (จ่ายแพทย์)</th><th>เอกสาร 20% (ส่วน รพ.)</th><th>ผลตรวจ</th><th></th></tr></thead><tbody>' +
+        pairs.map(function (p, i) {
+          var b = p.batch;
+          return '<tr' + (p.orphan ? ' style="opacity:.85"' : '') + '><td style="min-width:150px"><div class="t1">' + esc(p.g.name) + '</div>' + (p.orphan ? '<div class="t2">ชุดที่เลือกเอกสารเอง</div>' : '') + '</td><td>' + esc(b && b.workMonth ? b.workMonth : p.ym ? R.ymLabel(p.ym) : '—') + '</td>' +
+            '<td>' + (p.orphan ? '<span class="mono small">' + esc(String(b.docs80 || '').split(',').map(function (n) { return n.slice(-4); }).join(', ') || '—') + '</span>' : chips(p.d80)) + '</td>' +
+            '<td>' + (p.orphan ? '<span class="mono small">' + esc(String(b.docs20 || '').split(',').map(function (n) { return n.slice(-4); }).join(', ') || '—') + '</span>' : chips(p.d20)) + '</td>' +
+            '<td>' + res(p) + '</td><td class="nowrap">' +
+            (b ? '<button class="btn xs" data-open="' + i + '">' + icon('eye') + 'ดูรายชื่อ/แก้</button>' : open ? '<button class="btn xs pri" data-open="' + i + '">' + icon('search') + 'ตรวจ</button>' : '') +
+            (b && open ? '<button class="btn xs ghost" data-delb="' + esc(b.id) + '" aria-label="ลบชุดตรวจ">' + icon('trash') + '</button>' : '') + '</td></tr>';
+        }).join('') + '</tbody></table></div>'
+        : '<div class="empty">' + mascot(80, 'think') + '<p>ยังไม่พบเอกสาร 80%/20% ในรอบนี้ — วางข้อมูลจาก HRMi ก่อน หรือกด "ตรวจโดยเลือกเอกสารเอง"</p></div>') + '</div>' +
+      '<div class="card mt12"><p class="small" style="margin:0">' + icon('info') + ' SmartAPI: ' + (S.boot.smartapi ? '<span class="pill st-APPROVED">เชื่อมแล้ว</span> ตรวจสถานะพนักงานอัตโนมัติ (จำผลไว้ ' + (S.boot.settings.STAFF_TTL_DAYS || 7) + ' วัน)' : '<span class="pill st-WAIT">ยังไม่ได้เชื่อม</span> ผู้ดูแลต้องตั้ง SMARTAPI_USER / SMARTAPI_PASS ใน Script Properties') + '</p></div>';
+    $$('[data-open]', el).forEach(function (btn) { btn.onclick = function () { P.start(pairs[+btn.getAttribute('data-open')]); }; });
+    $$('[data-delb]', el).forEach(function (btn) {
+      btn.onclick = function () { confirmDlg('ลบชุดตรวจ', 'ลบผลตรวจของเอกสารนี้ใช่ไหม (ข้อมูลใน HRMi ไม่กระทบ)', 'ลบ', true).then(function (y) { if (!y) return; api('deleteSmc', { id: btn.getAttribute('data-delb') }).then(function (r) { applyRound(r.data); toast('ลบชุดตรวจแล้ว', 'ok'); refreshPage(); }, fail); }); };
+    });
+    if ($('#smFree')) $('#smFree').onclick = function () { P.start({ g: (S.boot.smcGroups || [])[0] || { id: 'OTHER', name: 'อื่น ๆ' }, d80: [], d20: [], ym: R.ymAdd(d.round.id, -1), free: true }); };
+    if ($('#smXall')) $('#smXall').onclick = function () { P.exportAll(pairs.filter(function (p) { return p.batch; })); };
+  },
+  /** ตรวจผลที่บันทึกไว้กับเอกสารปัจจุบันอีกครั้ง (เอกสารอาจถูกวางทับยอดใหม่) */
+  recheck: function (p) {
+    var b = p.batch, docs = Logic.liveDocs(S.data), pick = function (s) { var l = String(s || '').split(',').filter(Boolean); return docs.filter(function (x) { return l.indexOf(x.docNo) >= 0; }); };
+    var d80 = pick(b.docs80), d20 = pick(b.docs20), t80 = R.sum(d80, 'income'), t20 = R.sum(d20, 'income');
+    if (!d80.length && !d20.length) return { ok: false, why: 'ไม่พบเอกสารในรอบ' };
+    var ok80 = !d80.length || Math.abs(t80 - R.money(b.sum80)) < 0.01, ok20 = !d20.length || Math.abs(t20 - R.money(b.sum20)) < 0.01;
+    if (!ok80 || !ok20) return { ok: false, why: 'ไม่ตรง ต่าง ' + fmt((ok80 ? 0 : R.money(b.sum80) - t80) + (ok20 ? 0 : R.money(b.sum20) - t20)) };
+    return { ok: true };
+  },
+  start: function (p) {
+    var d = S.data, b = p.batch, staff = {};
+    if (b) {
+      (b.lines || []).forEach(function (l) { staff[l.empCode] = { fullName: l.fullName, position: l.position || '', working: l.working, status: l.status }; });
+      this.st = { round: d.round.id, id: b.id, groupId: b.groupId, title: b.title || p.g.name, workMonth: b.workMonth, lines: (b.lines || []).map(function (l) { return { empCode: l.empCode, amount: R.money(l.amount) }; }), staff: staff,
+        docs80: String(b.docs80 || '').split(',').filter(Boolean), docs20: String(b.docs20 || '').split(',').filter(Boolean), checked: true, saved: true };
+    } else {
+      this.st = { round: d.round.id, id: '', groupId: p.g.id, title: p.g.name, workMonth: p.ym ? R.ymLabel(p.ym) : R.ymLabel(R.ymAdd(d.round.id, -1)), lines: [], staff: {},
+        docs80: p.d80.map(function (x) { return x.docNo; }), docs20: p.d20.map(function (x) { return x.docNo; }), checked: false, saved: false, free: !!p.free };
+    }
+    refreshPage(); window.scrollTo(0, 0);
+  },
+  back: function () {
+    var P = this;
+    var go = function () { P.st = null; if (S.dirty === 'smc') S.dirty = null; refreshPage(); };
+    if (S.dirty === 'smc') return confirmDlg('ยังไม่ได้บันทึก', 'ผลตรวจชุดนี้ยังไม่ได้บันทึก ต้องการกลับไปหน้ารายการโดยไม่บันทึกใช่ไหม', 'กลับโดยไม่บันทึก', true).then(function (y) { if (y) go(); });
+    go();
+  },
+
+  /* ---------------- หน้าตรวจ 1 คู่เอกสาร */
+  work: function (el) {
+    var P = this, st = P.st, d = S.data, open = d.round.status === 'OPEN', groups = S.boot.smcGroups || [];
+    var docs = Logic.liveDocs(d), pick = function (l) { return docs.filter(function (x) { return l.indexOf(x.docNo) >= 0; }); };
+    var docLine = function (list, kind) {
+      return (list.length ? list.map(function (x) { return '<span class="chip mono" data-tip="' + esc(x.incomeName + (x.remark ? ' · ' + x.remark : '')) + '">' + esc(x.docNo) + ' · ' + fmt(x.income) + '</span>'; }).join('') : '<span class="chip">ยังไม่ได้เลือก</span>') +
+        (open ? '<button class="btn xs" data-pick="' + kind + '">' + icon('edit') + 'เปลี่ยน</button>' : '');
+    };
+    el.innerHTML += lockedNote() +
+      '<div class="row mb12"><button class="btn sm ghost" id="smBack">' + icon('left') + 'กลับรายการเอกสาร</button><span class="grow"></span>' + (st.saved ? '<span class="pill st-APPROVED">บันทึกไว้แล้ว · แก้ไขแล้วกดบันทึกซ้ำได้</span>' : '<span class="pill st-PROC">ชุดใหม่</span>') + '</div>' +
+      '<div class="card"><div class="card-h"><h2>' + icon('steth') + esc(st.title || 'ชุดตรวจ') + '</h2></div>' +
+      '<div class="grid g2" style="gap:10px"><div><div class="small muted">เอกสาร 80% (จ่ายแพทย์)</div><div class="chips mt8">' + docLine(pick(st.docs80), '80') + '</div></div>' +
+      '<div><div class="small muted">เอกสาร 20% (ส่วน รพ.)</div><div class="chips mt8">' + docLine(pick(st.docs20), '20') + '</div></div></div>' +
+      '<div class="row mt12">' + (st.free ? '<div class="field grow"><label for="smG">กลุ่มแพทย์</label><select id="smG" class="inp">' + groups.map(function (g) { return '<option value="' + esc(g.id) + '"' + (g.id === st.groupId ? ' selected' : '') + '>' + esc(g.name) + '</option>'; }).join('') + '</select></div>' : '') +
       '<div class="field" style="width:150px"><label for="smM">เดือนงาน</label><input id="smM" class="inp" value="' + esc(st.workMonth) + '"></div></div>' +
-      '<div class="field mt12"><label for="smT">วางรหัส จนท. และยอดเงิน ' + q('บรรทัดละ 1 คน: รหัส 7 หลัก ตามด้วยยอด (คั่นด้วย Tab/เว้นวรรค มีชื่ออยู่ตรงกลางก็ได้) รหัสซ้ำจะรวมยอดให้') + '</label><textarea id="smT" class="inp paste" placeholder="2680395	172300&#10;2680403	48900"></textarea></div>' +
-      '<div class="row end mt8"><span class="small muted flex1" id="smInfo"></span><button class="btn pri" id="smGo">' + icon('search') + 'ตรวจรายชื่อ & คำนวณ</button></div></div><div id="smRes"></div></div>' +
-      '<div class="grid" style="align-content:start"><div class="card"><div class="card-h"><h3>' + icon('hist') + 'ชุดที่บันทึกในรอบนี้</h3></div><div id="smSaved"></div></div>' +
-      '<div class="card"><div class="card-h"><h3>' + icon('info') + 'สถานะการเชื่อม SmartAPI</h3></div><p class="small" style="margin:0">' + (S.boot.smartapi ? '<span class="pill st-APPROVED">เชื่อมแล้ว</span> ตรวจสถานะพนักงานอัตโนมัติ (จำผลไว้ ' + (S.boot.settings.STAFF_TTL_DAYS || 7) + ' วัน)' : '<span class="pill st-WAIT">ยังไม่ได้เชื่อม</span> ผู้ดูแลต้องตั้ง SMARTAPI_USER / SMARTAPI_PASS ใน Script Properties') + '</p></div></div></div>';
-    P.drawSaved();
+      '<div class="field mt12"><label for="smT">วางรหัส จนท. และยอดเต็ม (100%) จากระบบ DF ' + q('บรรทัดละ 1 คน: รหัส 7 หลัก ตามด้วยยอดเต็ม (คั่นด้วย Tab/เว้นวรรค มีชื่ออยู่ตรงกลางก็ได้) รหัสซ้ำจะรวมยอดให้ · ระบบแบ่ง 80/20 ให้เอง') + '</label><textarea id="smT" class="inp paste" placeholder="2680395	172300&#10;2680403	48900"' + (open ? '' : ' readonly') + '></textarea></div>' +
+      '<div class="row end mt8"><span class="small muted flex1" id="smInfo"></span>' + (open ? '<button class="btn pri" id="smGo">' + icon('search') + 'ตรวจรายชื่อ & คำนวณ</button>' : '') + '</div></div><div id="smRes"></div>';
     var ta = $('#smT');
-    if (st.lines.length) ta.value = st.lines.map(function (l) { return l.empCode + '\t' + l.amount; }).join('\n');
-    ta.oninput = debounce(function () { var p = R.parseCodeAmount(ta.value); $('#smInfo').textContent = p.rows.length ? p.rows.length + ' คน · รวม ' + fmt(R.sum(p.rows, 'amount')) + (p.errors.length ? ' · อ่านไม่ได้ ' + p.errors.length + ' บรรทัด' : '') : ''; }, 200);
+    if (st.lines.length && !st.text) ta.value = st.lines.map(function (l) { return l.empCode + '\t' + l.amount; }).join('\n');
+    if (st.text) ta.value = st.text;
+    if (st.pasted == null) st.pasted = ta.value;
+    ta.oninput = debounce(function () {
+      st.text = ta.value;
+      var p = R.parseCodeAmount(ta.value);
+      $('#smInfo').textContent = p.rows.length ? p.rows.length + ' คน · รวม ' + fmt(R.sum(p.rows, 'amount')) + (p.errors.length ? ' · อ่านไม่ได้ ' + p.errors.length + ' บรรทัด' : '') : '';
+      if (st.checked && open && ta.value !== st.pasted) { S.dirty = 'smc'; }
+    }, 200);
     ta.oninput();
-    $('#smG').onchange = function () { st.groupId = this.value; st.docs80 = st.docs20 = null; if (st.lines.length) P.drawRes(); };
-    $('#smM').onchange = function () { st.workMonth = this.value; };
-    $('#smGo').onclick = function () {
+    $('#smBack').onclick = function () { P.back(); };
+    if ($('#smG')) $('#smG').onchange = function () { st.groupId = this.value; st.title = (groups.filter(function (g) { return g.id === st.groupId; })[0] || {}).name || st.title; };
+    $('#smM').onchange = function () { st.workMonth = this.value; if (open) S.dirty = 'smc'; };
+    $$('[data-pick]', el).forEach(function (b) { b.onclick = function () { P.pickDocs(b.getAttribute('data-pick')); }; });
+    if ($('#smGo')) $('#smGo').onclick = function () {
       var p = R.parseCodeAmount(ta.value);
       if (!p.rows.length) return toast('วางรหัส จนท. และยอดก่อน', 'warn');
       if (p.errors.length) toast('มี ' + p.errors.length + ' บรรทัดที่อ่านไม่ได้ (ข้ามไป)', 'warn');
       var b = this; b.classList.add('loading');
       api('smcLookup', { codes: p.rows.map(function (r) { return r.empCode; }) }).then(function (res) {
-        b.classList.remove('loading'); st.lines = p.rows; st.staff = res.staff; st.groupId = $('#smG').value; st.workMonth = $('#smM').value;
+        b.classList.remove('loading'); st.lines = p.rows; st.staff = res.staff; st.checked = true; st.pasted = ta.value; S.dirty = 'smc';
         if (res.apiError) toast('SmartAPI: ' + res.apiError, 'warn');
         P.drawRes();
       }, function (e) { b.classList.remove('loading'); fail(e); });
     };
-    if (st.lines.length) P.drawRes();
+    if (st.checked && st.lines.length) P.drawRes();
   },
-  group: function () { var st = this.st; return (S.boot.smcGroups || []).filter(function (g) { return g.id === st.groupId; })[0] || {}; },
   calc: function () {
-    var st = this.st, rate = +S.boot.settings.RATE_80 || 80, docs = Logic.liveDocs(S.data), g = this.group();
+    var st = this.st, rate = +S.boot.settings.RATE_80 || 80, docs = Logic.liveDocs(S.data);
     var lines = st.lines.map(function (l) { var s = R.split(l.amount, rate), f = st.staff[l.empCode] || {}; return Object.assign({}, l, { a: s.a, b: s.b, fullName: f.fullName || '', position: f.position || '', working: f.working, status: f.status || '', source: f.source || '' }); });
-    var cand = function (kw) { return kw ? docs.filter(function (x) { return x.incomeName.indexOf(kw) >= 0; }) : []; };
-    var c80 = cand(g.kw80), c20 = cand(g.kw20);
-    if (!st.docs80) st.docs80 = c80.map(function (x) { return x.docNo; });
-    if (!st.docs20) st.docs20 = c20.map(function (x) { return x.docNo; });
     var pick = function (list) { return docs.filter(function (x) { return list.indexOf(x.docNo) >= 0; }); };
     var d80 = pick(st.docs80), d20 = pick(st.docs20);
     var r = { lines: lines, rate: rate, total: R.sum(lines, 'amount'), sum80: R.sum(lines, 'a'), sum20: R.sum(lines, 'b'), d80: d80, d20: d20, doc80Total: R.sum(d80, 'income'), doc20Total: R.sum(d20, 'income'),
-      flags: lines.filter(function (l) { return l.working === false; }).length, c80: c80, c20: c20 };
-    r.ok80 = Math.abs(r.sum80 - r.doc80Total) < 0.01; r.ok20 = Math.abs(r.sum20 - r.doc20Total) < 0.01; r.result = r.ok80 && r.ok20 && d80.length && d20.length ? 'MATCH' : 'MISMATCH';
+      flags: lines.filter(function (l) { return l.working === false; }).length };
+    r.ok80 = d80.length > 0 && Math.abs(r.sum80 - r.doc80Total) < 0.01; r.ok20 = d20.length > 0 && Math.abs(r.sum20 - r.doc20Total) < 0.01;
+    r.result = r.ok80 && r.ok20 ? 'MATCH' : 'MISMATCH';
     return r;
   },
   drawRes: function () {
-    var P = this, st = P.st, r = P.calc(), open = isOpenRound(), box = $('#smRes'), g = P.group();
-    var cmp = function (label, sum, doc, ok, docs, kind) {
+    var P = this, st = P.st, r = P.calc(), open = isOpenRound(), box = $('#smRes'); if (!box) return;
+    var cmp = function (label, sum, doc, ok, has) {
       return '<div class="card kpi"><span class="ico ' + (ok ? 't-ok' : 't-bad') + '">' + icon(ok ? 'ok' : 'alert') + '</span><div class="kpi-l">' + label + '</div><div class="kpi-v num" style="font-size:1.3rem">' + fmt(sum) + '</div>' +
-        '<div class="kpi-s">เอกสาร HRMi ' + fmt(doc) + (ok ? ' · <b style="color:var(--ok)">ตรงกัน</b>' : ' · <b style="color:var(--bad)">ต่าง ' + fmt(sum - doc) + '</b>') + '</div>' +
-        '<div class="chips mt8">' + (docs.length ? docs.map(function (x) { return '<span class="chip mono" data-tip="' + esc(x.incomeName) + '">' + esc(x.docNo) + '</span>'; }).join('') : '<span class="chip">ยังไม่ได้เลือกเอกสาร</span>') + '<button class="btn xs" data-pick="' + kind + '">' + icon('edit') + 'เลือกเอกสาร</button></div></div>';
+        '<div class="kpi-s">' + (has ? 'เอกสาร HRMi ' + fmt(doc) + (ok ? ' · <b style="color:var(--ok)">ตรงกัน</b>' : ' · <b style="color:var(--bad)">ต่าง ' + fmt(sum - doc) + '</b>') : '<b style="color:var(--bad)">ยังไม่ได้เลือกเอกสาร</b>') + '</div></div>';
     };
-    box.innerHTML = '<div class="grid g3 stagger">' +
-      '<div class="card kpi"><span class="ico t-vio">' + icon('users') + '</span><div class="kpi-l">' + esc(g.name || '') + '</div><div class="kpi-v num" style="font-size:1.3rem">' + fmt(r.total) + '</div><div class="kpi-s">' + r.lines.length + ' คน' + (r.flags ? ' · <b style="color:var(--bad)">ติดธง ' + r.flags + '</b>' : '') + '</div></div>' +
-      cmp('ส่วน ' + r.rate + '% (จ่ายแพทย์)', r.sum80, r.doc80Total, r.ok80 && r.d80.length, r.d80, '80') + cmp('ส่วน ' + (100 - r.rate) + '% (ส่วน รพ.) ' + q('อย่าลืมเลือก "จ่ายล่วงหน้า" ใน HRMi'), r.sum20, r.doc20Total, r.ok20 && r.d20.length, r.d20, '20') + '</div>' +
+    box.innerHTML = '<div class="grid g3 stagger mt12">' +
+      '<div class="card kpi"><span class="ico t-vio">' + icon('users') + '</span><div class="kpi-l">ยอดเต็มรวม</div><div class="kpi-v num" style="font-size:1.3rem">' + fmt(r.total) + '</div><div class="kpi-s">' + r.lines.length + ' คน' + (r.flags ? ' · <b style="color:var(--bad)">ติดธง ' + r.flags + '</b>' : '') + '</div></div>' +
+      cmp('ส่วน ' + r.rate + '% (จ่ายแพทย์)', r.sum80, r.doc80Total, r.ok80, r.d80.length) + cmp('ส่วน ' + (100 - r.rate) + '% (ส่วน รพ.) ' + q('อย่าลืมเลือก "จ่ายล่วงหน้า" ใน HRMi'), r.sum20, r.doc20Total, r.ok20, r.d20.length) + '</div>' +
       '<div class="tbl-wrap mt12 tall"><table class="tbl"><thead><tr><th>#</th><th>รหัส</th><th>ชื่อ-สกุล / ตำแหน่ง</th><th>สถานะพนักงาน</th><th class="n">ยอดเต็ม</th><th class="n">' + r.rate + '%</th><th class="n">' + (100 - r.rate) + '%</th></tr></thead><tbody>' +
       r.lines.map(function (l, i) {
         var flag = l.working === false ? '<span class="pill st-RETURN">' + icon('flag') + esc(l.status || 'พ้นสภาพ') + '</span>' : l.working === true ? '<span class="pill st-APPROVED">' + esc(l.status || 'ทำงาน') + '</span>' : '<span class="pill st-NONE">' + esc(l.status || 'ตรวจไม่ได้') + '</span>';
         return '<tr' + (l.working === false ? ' style="background:var(--bad-soft)"' : '') + '><td class="muted">' + (i + 1) + '</td><td class="mono">' + esc(l.empCode) + (l.dup ? ' <span class="pill st-WAIT nodot" data-tip="รหัสซ้ำ ' + l.dup + ' บรรทัด รวมยอดแล้ว">×' + l.dup + '</span>' : '') + '</td><td><div class="t1">' + esc(l.fullName || '—') + '</div><div class="t2">' + esc(l.position || '') + '</div></td><td>' + flag + '</td>' +
           '<td class="n">' + fmt(l.amount) + '</td><td class="n">' + fmt(l.a) + '</td><td class="n">' + fmt(l.b) + '</td></tr>';
       }).join('') + '</tbody><tfoot><tr><td colspan="4">รวม ' + r.lines.length + ' คน</td><td class="n">' + fmt(r.total) + '</td><td class="n">' + fmt(r.sum80) + '</td><td class="n">' + fmt(r.sum20) + '</td></tr></tfoot></table></div>' +
-      '<div class="bulk"><span class="flex1">' + (r.result === 'MATCH' ? '✅ ยอดรายคนรวมกันตรงกับเอกสาร HRMi' : '⚠️ ยอดยังไม่ตรง ตรวจรายชื่อหรือเลือกเอกสารให้ถูกใบ') + '</span><button class="btn sm" id="smX">' + icon('dl') + 'Excel</button>' + (open ? '<button class="btn pri" id="smSave">' + icon('ok') + 'บันทึกชุดตรวจ</button>' : '') + '</div>';
-    $$('[data-pick]', box).forEach(function (b) { b.onclick = function () { P.pickDocs(b.getAttribute('data-pick')); }; });
+      '<div class="bulk"><span class="flex1">' + (r.result === 'MATCH' ? '✅ ยอดรายคนรวมกันตรงกับเอกสาร HRMi ทั้ง 2 ใบ' : '⚠️ ยอดยังไม่ตรง ตรวจรายชื่อ/ยอด หรือเปลี่ยนเอกสารให้ถูกใบ (บันทึกได้ ระบบจะติดสถานะ "ไม่ตรง")') + '</span><button class="btn sm" id="smX">' + icon('dl') + 'Excel</button>' + (open ? '<button class="btn pri" id="smSave">' + icon('ok') + 'บันทึกชุดตรวจนี้</button>' : '') + '</div>';
     $('#smX').onclick = function () { P.exportX(r); };
     if ($('#smSave')) $('#smSave').onclick = function () {
       var b = this; b.classList.add('loading');
-      api('saveSmc', { batch: { id: st.id, roundId: S.roundId, groupId: st.groupId, title: g.name, workMonth: st.workMonth, total: r.total, sum80: r.sum80, sum20: r.sum20, docs80: st.docs80, docs20: st.docs20,
-        doc80Total: r.doc80Total, doc20Total: r.doc20Total, result: r.result, flags: r.flags, lines: r.lines.map(function (l) { return { empCode: l.empCode, amount: l.amount, a: l.a, b: l.b, fullName: l.fullName, working: l.working, status: l.status }; }) } })
-        .then(function (res) { st.id = res.id; applyRound(res.data); toast('บันทึกชุดตรวจแล้ว', 'ok'); P.drawSaved(); b.classList.remove('loading'); }, function (e) { b.classList.remove('loading'); fail(e); });
+      if (!st.id) st.id = 's' + newRid();   // รหัสชุดสร้างฝั่งเว็บ → ส่งซ้ำ (เน็ตสะดุด) ไม่เกิดชุดซ้ำ
+      api('saveSmc', { batch: { id: st.id, roundId: S.roundId, groupId: st.groupId, title: st.title, workMonth: st.workMonth, total: r.total, sum80: r.sum80, sum20: r.sum20, docs80: st.docs80, docs20: st.docs20,
+        doc80Total: r.doc80Total, doc20Total: r.doc20Total, result: r.result, flags: r.flags, lines: r.lines.map(function (l) { return { empCode: l.empCode, amount: l.amount, a: l.a, b: l.b, fullName: l.fullName, position: l.position, working: l.working, status: l.status }; }) } })
+        .then(function (res) {
+          applyRound(res.data); S.dirty = null; P.st = null;
+          toast('บันทึก ' + (st.title || 'ชุดตรวจ') + ' แล้ว (' + r.lines.length + ' คน' + (r.result === 'MATCH' ? ' · ตรงกัน' : ' · ยอดยังไม่ตรง') + ')', r.result === 'MATCH' ? 'ok' : 'warn');
+          refreshPage();
+        }, function (e) { b.classList.remove('loading'); fail(e); });
     };
   },
   pickDocs: function (kind) {
-    var P = this, st = P.st, docs = Logic.liveDocs(S.data).filter(function (x) { return /\d0%/.test(x.incomeName); }), cur = kind === '80' ? st.docs80 : st.docs20;
-    modal({ title: 'เลือกเอกสาร ' + kind + '%', icon: 'docs', mid: true, body: '<p class="muted small" style="margin:0">แสดงเอกสารในรอบนี้ที่ชื่อรายได้มี "…0%"</p><div class="tbl-wrap tall"><table class="tbl"><tbody>' +
+    var P = this, st = P.st, docs = Logic.liveDocs(S.data).filter(function (x) { return /\d\s*0\s*%/.test(x.incomeName); }), cur = kind === '80' ? st.docs80 : st.docs20;
+    modal({ title: 'เลือกเอกสาร ' + kind + '%', icon: 'docs', mid: true, body: '<p class="muted small" style="margin:0">เอกสารในรอบนี้ที่ชื่อรายได้มี "…0%" · เลือกได้หลายใบ</p><div class="tbl-wrap tall"><table class="tbl"><tbody>' +
       docs.map(function (x, i) { return '<tr><td class="c"><input type="checkbox" data-i="' + i + '"' + (cur.indexOf(x.docNo) >= 0 ? ' checked' : '') + '></td><td class="mono">' + esc(x.docNo) + '</td><td><div class="t1">' + esc(x.incomeName) + '</div><div class="t2">' + esc(x.remark || '') + '</div></td><td class="n">' + fmt(x.income) + '</td></tr>'; }).join('') + '</tbody></table></div>',
       actions: [{ label: 'ยกเลิก', cls: 'ghost', value: null }, { label: 'ใช้เอกสารที่เลือก', cls: 'pri', click: function (ov) {
         var list = $$('[data-i]', ov).filter(function (c) { return c.checked; }).map(function (c) { return docs[+c.getAttribute('data-i')].docNo; });
-        if (kind === '80') st.docs80 = list; else st.docs20 = list; P.drawRes();
+        if (kind === '80') st.docs80 = list; else st.docs20 = list;
+        if (st.checked) S.dirty = 'smc';
+        refreshPage();
       } }] });
   },
-  drawSaved: function () {
-    var P = this, box = $('#smSaved'), list = (S.data.smc || []);
-    box.innerHTML = list.length ? '<div class="grid" style="gap:8px">' + list.map(function (b) {
-      return '<div class="todo-i" style="padding:9px 10px"><span class="ico ' + (b.result === 'MATCH' ? 't-ok' : 't-bad') + '">' + icon(b.result === 'MATCH' ? 'ok' : 'alert') + '</span><span class="tx"><b class="small">' + esc(b.title) + ' · ' + esc(b.workMonth) + '</b><span>' + b.lines.length + ' คน · ' + fmtM(b.total) + (+b.flags ? ' · ติดธง ' + b.flags : '') + ' · ' + thDateTime(b.at) + '</span></span>' +
-        '<button class="btn xs" data-load="' + esc(b.id) + '">เปิด</button>' + (isOpenRound() ? '<button class="btn xs ghost" data-delb="' + esc(b.id) + '" aria-label="ลบ">' + icon('trash') + '</button>' : '') + '</div>';
-    }).join('') + '</div>' : '<p class="muted small" style="margin:0">ยังไม่มี</p>';
-    $$('[data-load]', box).forEach(function (btn) {
-      btn.onclick = function () {
-        var b = list.filter(function (x) { return x.id === btn.getAttribute('data-load'); })[0], staff = {};
-        b.lines.forEach(function (l) { staff[l.empCode] = { fullName: l.fullName, working: l.working, status: l.status }; });
-        P.st = { round: S.roundId, id: b.id, groupId: b.groupId, workMonth: b.workMonth, lines: b.lines.map(function (l) { return { empCode: l.empCode, amount: l.amount }; }), staff: staff, docs80: String(b.docs80 || '').split(',').filter(Boolean), docs20: String(b.docs20 || '').split(',').filter(Boolean) };
-        refreshPage();
-      };
-    });
-    $$('[data-delb]', box).forEach(function (btn) {
-      btn.onclick = function () { confirmDlg('ลบชุดตรวจ', 'ลบชุดตรวจนี้ใช่ไหม (ข้อมูลใน HRMi ไม่กระทบ)', 'ลบ', true).then(function (y) { if (!y) return; api('deleteSmc', { id: btn.getAttribute('data-delb') }).then(function (res) { applyRound(res.data); if (P.st.id === btn.getAttribute('data-delb')) P.st = null; toast('ลบแล้ว', 'ok'); refreshPage(); }, fail); }); };
-    });
-  },
   exportX: function (r) {
-    var d = S.data, g = this.group(), rows = Logic.headRows('ตรวจแพทย์ ' + (g.name || '') + ' เดือนงาน ' + this.st.workMonth, d);
+    var d = S.data, st = this.st, rows = Logic.headRows('ตรวจแพทย์ ' + (st.title || '') + ' เดือนงาน ' + st.workMonth, d);
     rows.push(['ลำดับ', 'รหัสประจำตัว', 'ชื่อ-นามสกุล', 'ตำแหน่ง', 'สถานะพนักงาน', 'ยอดเต็ม', r.rate + '%', (100 - r.rate) + '%'].map(function (h) { return { v: h, s: 'head' }; }));
     r.lines.forEach(function (l, i) { rows.push([{ v: i + 1, s: 'int' }, l.empCode, l.fullName, l.position, { v: l.status || '', s: l.working === false ? 'bad' : 'text' }, l.amount, l.a, l.b]); });
     rows.push([{ v: 'รวม', s: 'totText' }, '', '', '', '', { v: r.total, s: 'totMoney' }, { v: r.sum80, s: 'totMoney' }, { v: r.sum20, s: 'totMoney' }]);
     rows.push([]); rows.push(['เอกสาร ' + r.rate + '%', r.d80.map(function (x) { return x.docNo; }).join(', '), '', '', '', '', r.doc80Total, r.ok80 ? 'ตรงกัน' : 'ต่าง ' + fmt(r.sum80 - r.doc80Total)]);
     rows.push(['เอกสาร ' + (100 - r.rate) + '%', r.d20.map(function (x) { return x.docNo; }).join(', '), '', '', '', '', '', r.doc20Total, r.ok20 ? 'ตรงกัน' : 'ต่าง ' + fmt(r.sum20 - r.doc20Total)]);
-    XLSX.download(XLSX.book([{ name: 'ตรวจ 80-20', rows: rows, cols: [7, 13, 32, 28, 18, 15, 15, 15, 14], merges: ['A1:H1', 'A2:H2', 'A3:H3'], freeze: 5 }]), 'PayPop_SMC_' + (g.id || '') + '_' + nowStamp() + '.xlsx');
+    XLSX.download(XLSX.book([{ name: 'ตรวจ 80-20', rows: rows, cols: [7, 13, 32, 28, 18, 15, 15, 15, 14], merges: ['A1:H1', 'A2:H2', 'A3:H3'], freeze: 5 }]), 'PayPop_SMC_' + (st.groupId || '') + '_' + nowStamp() + '.xlsx');
+  },
+  /** Excel ทั้งรอบ: แผ่นสรุปรายเอกสาร + แผ่นรายชื่อแพทย์ทุกชุด */
+  exportAll: function (pairs) {
+    var d = S.data, P = this, rate = +S.boot.settings.RATE_80 || 80, sum = Logic.headRows('สรุปตรวจแพทย์ SMC 80/20 · ' + d.round.name, d), ppl = Logic.headRows('รายชื่อแพทย์ SMC ทุกชุดตรวจ · ' + d.round.name, d);
+    sum.push(['กลุ่ม', 'เดือนงาน', 'เอกสาร ' + rate + '%', 'เอกสาร ' + (100 - rate) + '%', 'จำนวนแพทย์', 'ยอดเต็ม', rate + '%', (100 - rate) + '%', 'ผลตรวจ', 'ติดธง', 'บันทึกโดย/เมื่อ'].map(function (h) { return { v: h, s: 'head' }; }));
+    ppl.push(['กลุ่ม', 'เอกสาร ' + rate + '%', 'ลำดับ', 'รหัสประจำตัว', 'ชื่อ-นามสกุล', 'สถานะพนักงาน', 'ยอดเต็ม', rate + '%', (100 - rate) + '%'].map(function (h) { return { v: h, s: 'head' }; }));
+    pairs.forEach(function (p) {
+      var b = p.batch, ok = P.recheck(p);
+      sum.push([b.title || p.g.name, b.workMonth || '', String(b.docs80 || '').replace(/,/g, ', '), String(b.docs20 || '').replace(/,/g, ', '), { v: (b.lines || []).length, s: 'int' }, R.money(b.total), R.money(b.sum80), R.money(b.sum20), { v: ok.ok ? 'ตรงกัน' : (ok.why || 'ไม่ตรง'), s: ok.ok ? 'text' : 'bad' }, { v: +b.flags || 0, s: 'int' }, (b.by || '') + ' ' + thDateTime(b.at)]);
+      (b.lines || []).forEach(function (l, i) { ppl.push([b.title || p.g.name, String(b.docs80 || '').replace(/,/g, ', '), { v: i + 1, s: 'int' }, l.empCode, l.fullName || '', { v: l.status || '', s: l.working === false ? 'bad' : 'text' }, R.money(l.amount), R.money(l.a), R.money(l.b)]); });
+    });
+    XLSX.download(XLSX.book([{ name: 'สรุปรายเอกสาร', rows: sum, cols: [30, 12, 22, 22, 11, 16, 16, 16, 14, 8, 26], merges: ['A1:K1', 'A2:K2', 'A3:K3'], freeze: 5 },
+      { name: 'รายชื่อแพทย์', rows: ppl, cols: [30, 22, 7, 13, 32, 18, 15, 15, 15], merges: ['A1:I1', 'A2:I2', 'A3:I3'], freeze: 5 }]), 'PayPop_SMC_ทั้งรอบ_' + d.round.id + '_' + nowStamp() + '.xlsx');
   }
 };
 
@@ -134,6 +274,7 @@ Pages.deduct = {
     return out;
   },
   draw: function () {
+    if (!$('#ddBody')) return;   // ผู้ใช้ไปหน้าอื่นแล้วระหว่างรอ Google
     var P = this, c = P.cache, rows = c.rows, open = isOpenRound(), prev = c.res.prev || [], sums = P.sums(rows), psum = prev.length ? P.sums(prev) : [];
     var pmap = {}; prev.forEach(function (r, i) { pmap[r.label + '|' + r.code] = r.kind === 'sum' ? psum[i] : r.amount; });
     var total = R.sum(rows.filter(function (r) { return r.kind === 'item'; }), 'amount');
